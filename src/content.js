@@ -80,17 +80,29 @@
   const isDisabled = (button) =>
     !button || button.disabled || button.getAttribute('aria-disabled') === 'true';
 
-  function lastAssistantText() {
-    const messages = document.querySelectorAll('[data-message-author-role="assistant"]');
-    const last = messages[messages.length - 1];
-    return last ? (last.innerText || last.textContent || '') : '';
+  const textOf = (el) => (el?.innerText || el?.textContent || '');
+
+  // 마지막 사용자 메시지 이후의 응답 전체 텍스트.
+  // 도구를 쓰는 긴 응답은 assistant 블록 여러 개로 나뉘므로 마지막 하나만 읽으면 안 된다.
+  function currentResponseText() {
+    const users = document.querySelectorAll('[data-message-author-role="user"]');
+    const lastUser = users[users.length - 1];
+    const blocks = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
+      .filter((el) => !lastUser || (lastUser.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+    if (blocks.length) return blocks.map(textOf).join('\n');
+
+    // 역할 속성이 바뀐 경우를 대비한 fallback: 마지막 대화 턴 전체
+    const turns = document.querySelectorAll('article, [data-testid^="conversation-turn"]');
+    return textOf(turns[turns.length - 1]);
   }
 
-  // 응답 안에서 가장 마지막에 나온 AUTOPILOT 마커를 돌려준다. 없으면 null.
-  function readMarker() {
-    const matches = [...lastAssistantText().matchAll(MARKER_RE)];
+  // 텍스트에서 가장 마지막에 나온 AUTOPILOT 마커를 돌려준다. 없으면 null.
+  function readMarker(text) {
+    const matches = [...text.matchAll(MARKER_RE)];
     return matches.length ? matches[matches.length - 1][1].toUpperCase() : null;
   }
+
+  const tail = (text, n = 60) => text.replace(/\s+/g, ' ').trim().slice(-n);
 
   // ---------- 입력/전송 ----------
 
@@ -173,15 +185,54 @@
 
   // ---------- 응답 종료 처리 ----------
 
-  async function onResponseFinished() {
-    if (!state.running || isBusy()) return;
+  // 응답이 진짜 끝났는지 확인한다. 중지 버튼이 잠깐 사라졌다 다시 나타나는 경우(도구 호출 사이 등)와
+  // 마지막 문단이 늦게 그려지는 경우를 견디도록, 화면 텍스트가 일정 시간 변하지 않을 때까지 기다린다.
+  // 다시 응답 중이 되면 null을 돌려주고, 다음 종료 감지 때 재판정한다.
+  async function waitForSettledResponse() {
+    const SETTLE_WITH_MARKER_MS = 2500;
+    const SETTLE_WITHOUT_MARKER_MS = 10000;
+    const deadline = Date.now() + 45000;
+    let lastText = null;
+    let stableSince = Date.now();
 
-    const marker = readMarker();
+    while (Date.now() < deadline) {
+      if (!state.running || isBusy()) return null;
+      const text = currentResponseText();
+      if (text !== lastText) {
+        lastText = text;
+        stableSince = Date.now();
+      } else {
+        const need = readMarker(text) ? SETTLE_WITH_MARKER_MS : SETTLE_WITHOUT_MARKER_MS;
+        if (Date.now() - stableSince >= need) break;
+      }
+      await delay(500);
+    }
+    return lastText ?? '';
+  }
+
+  let finishing = false;
+
+  async function onResponseFinished() {
+    if (!state.running || finishing) return;
+    finishing = true;
+    try {
+      await setStatus('응답 종료 감지, 마지막 줄 확인 중');
+      const text = await waitForSettledResponse();
+      if (text === null || !state.running) return;
+      await decideNext(text);
+    } finally {
+      finishing = false;
+    }
+  }
+
+  async function decideNext(text) {
+    const marker = readMarker(text);
 
     if (marker === 'DONE') return stop('ChatGPT가 프로젝트 완료(AUTOPILOT: DONE)를 보고했습니다', 'done');
     if (marker === 'BLOCKED') return stop('ChatGPT가 진행 불가(AUTOPILOT: BLOCKED)를 보고했습니다. 응답을 확인하세요', 'blocked');
     if (!marker && state.strict && state.sent > 0) {
-      return stop('응답에 AUTOPILOT 상태 줄이 없습니다 (도구 승인 대기·오류 가능). 화면을 확인하세요', 'blocked');
+      const seen = tail(text);
+      return stop(`응답에 AUTOPILOT 상태 줄이 없습니다 (도구 승인 대기·오류 가능). 읽은 끝부분: "${seen || '(비어 있음)'}"`, 'blocked');
     }
     if (state.sent >= state.limit) return stop('최대 전송 횟수까지 작업 완료');
 
@@ -197,8 +248,7 @@
 
     if (lastBusy && !nowBusy && seenBusy && !sending) {
       seenBusy = false;
-      // 마지막 문단이 화면에 다 그려질 시간을 준 뒤 마커를 읽는다.
-      setTimeout(() => void onResponseFinished(), 1500);
+      void onResponseFinished();
     }
 
     lastBusy = nowBusy;

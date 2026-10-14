@@ -1,12 +1,13 @@
 // 매번 똑같이 보내도 안전하도록 작성한 기본 후속 프롬프트.
-// 대화 기억이 아니라 프로젝트 파일과 Git 상태를 기준으로 다음 할 일을 정하게 하고,
-// 마지막 줄의 AUTOPILOT 마커로 확장 프로그램이 계속/중지를 판단한다.
+// 특정 MCP 도구 이름에 의존하지 않고, 대화 기억이 아니라 프로젝트 파일과 Git 상태를 기준으로
+// 다음 할 일을 정하게 한다. 마지막 줄의 AUTOPILOT 마커로 확장 프로그램이 계속/중지를 판단한다.
 const AUTOPILOT_DEFAULT_PROMPT = `[AutoPilot 반복 작업] 연결된 SSalMuk 프로젝트에서 다음 한 단계를 진행하세요. 이 메시지는 매번 똑같이 반복되므로, 이전 대화 내용이 아니라 프로젝트 파일과 Git 상태를 기준으로 판단하세요.
 
-1. 상태 확인: git_status로 변경 사항을 보고, PROJECT_STATE.md · ROADMAP.md · tasks/ 아래 문서(SPEC, TODO, QA, RESULT)를 읽어 현재 진행 상황을 파악하세요. 커밋되지 않은 변경이 있으면 새 작업보다 그 변경을 먼저 마무리하세요.
-2. 작업 선택: 아직 끝나지 않은 항목 중 가장 앞선 것 하나만 고르세요. 이 문서들이 없으면 프로젝트 구조를 살펴 ROADMAP.md와 PROJECT_STATE.md부터 작성하세요.
-3. 구현·검증: 고른 항목을 구현하고 project_run_check로 test/build를 실행하세요. 실패하면 이번 단계 안에서 원인을 찾아 고치세요.
-4. 기록·커밋: 검증을 통과하면 해당 TASK의 TODO·RESULT와 PROJECT_STATE.md를 갱신하고, 바뀐 파일만 git_commit_files로 커밋하세요.
+1. 상태 확인: git status로 변경 사항을 보고, PROJECT_STATE.md · ROADMAP.md · tasks/ 아래 문서(SPEC, TODO, QA, RESULT)를 읽어 현재 진행 상황을 파악하세요. 커밋되지 않은 변경이 있으면 새 작업보다 그 변경을 먼저 마무리하세요.
+2. 작업 선택: 아직 끝나지 않은 항목 중 가장 앞선 것 하나만 고르세요. TASK는 다 끝났지만 ROADMAP에 미완료 마일스톤이 있으면, 그 마일스톤을 작은 TASK로 쪼개 문서를 만든 뒤 첫 TASK를 시작하세요. 이 문서들이 없으면 프로젝트 구조를 살펴 ROADMAP.md와 PROJECT_STATE.md부터 작성하세요.
+3. 구현·검증: 고른 항목을 구현하고, 프로젝트의 test/build 명령(README, package.json, Makefile, foundry.toml 등에서 확인)을 실행하세요. 실패하면 이번 단계 안에서 원인을 찾아 고치세요.
+4. 기록·커밋: 검증을 통과하면 해당 TASK의 TODO·RESULT와 PROJECT_STATE.md(다음 할 일 포함)를 갱신하고, 바뀐 파일만 로컬 커밋하세요.
+5. 금지: 원격 push, 파일 대량 삭제, 배포, 비밀값 처리처럼 되돌리기 어려운 작업은 하지 말고 PROJECT_STATE.md에 "사람 확인 필요"로 남기세요.
 
 응답의 맨 마지막 줄에는 아래 셋 중 하나만 그대로 적으세요.
 AUTOPILOT: CONTINUE  (남은 작업이 있음)

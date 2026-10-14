@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT AutoPilot",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "SSalMuk MCP와 연결된 ChatGPT 대화에서 같은 후속 프롬프트를 반복 전송해 프로젝트를 이어서 개발합니다.",
   "minimum_chrome_version": "116",
   "permissions": [
