@@ -1,17 +1,25 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT AutoPilot",
-  "version": "0.1.2",
-  "description": "ChatGPT 후속 프롬프트 자동 입력 실험",
+  "version": "0.2.0",
+  "description": "SSalMuk MCP와 연결된 ChatGPT 대화에서 같은 후속 프롬프트를 반복 전송해 프로젝트를 이어서 개발합니다.",
+  "minimum_chrome_version": "116",
   "permissions": [
     "activeTab",
-    "storage"
+    "storage",
+    "sidePanel"
   ],
   "host_permissions": [
     "https://chatgpt.com/*"
   ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
   "action": {
-    "default_popup": "popup.html"
+    "default_title": "ChatGPT AutoPilot 패널 열기"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "content_scripts": [
     {

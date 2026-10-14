@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChatGPT AutoPilot</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f6f6f7;
+      --border: #dedee2;
+      --text: #1d1d20;
+      --muted: #6b6b75;
+      --accent: #2f6fed;
+      --accent-text: #ffffff;
+      --ok: #1f8a4c;
+      --warn: #b7791f;
+      --err: #c53030;
+      color-scheme: light dark;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1e1f22;
+        --surface: #2a2b2f;
+        --border: #3a3b40;
+        --text: #ececf1;
+        --muted: #a0a0ab;
+        --accent: #6b9bff;
+        --accent-text: #0e1117;
+        --ok: #48bb78;
+        --warn: #ecc94b;
+        --err: #fc8181;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    }
+    h1 { font-size: 16px; margin: 0; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+    .badge {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+      background: var(--surface); color: var(--muted); border: 1px solid var(--border);
+    }
+    .badge[data-state="running"] { color: var(--ok); border-color: var(--ok); }
+    .badge[data-state="done"] { color: var(--accent); border-color: var(--accent); }
+    .badge[data-state="blocked"], .badge[data-state="error"] { color: var(--err); border-color: var(--err); }
+
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+    .status-line { font-weight: 600; word-break: keep-all; }
+    .progress { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+    .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+    .counter { color: var(--muted); font-size: 12px; margin-top: 4px; }
+
+    details summary { cursor: pointer; font-weight: 600; }
+    details ol { margin: 8px 0 0; padding-left: 18px; color: var(--muted); }
+    details li { margin-bottom: 4px; }
+    code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
+    label { display: block; font-weight: 600; margin: 12px 0 4px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .row label { margin: 12px 0 4px; }
+    textarea, input[type="number"] {
+      width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font: inherit;
+    }
+    textarea { min-height: 220px; resize: vertical; font-size: 12px; }
+    .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; margin-top: 10px; }
+    .check input { margin-top: 3px; }
+    .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+
+    button {
+      font: inherit; border-radius: 8px; padding: 8px 12px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    }
+    button:disabled { opacity: .45; cursor: default; }
+    button.link { border: none; background: none; color: var(--accent); padding: 0; font-size: 12px; }
+    .actions { display: flex; gap: 8px; margin-top: 14px; }
+    .actions button { flex: 1; font-weight: 600; padding: 10px; }
+    #start { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+
+    #log { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; font-size: 12px; }
+    #log li { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--border); }
+    #log time { color: var(--muted); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    #log .empty { color: var(--muted); border: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ChatGPT AutoPilot</h1>
+    <span id="badge" class="badge" data-state="idle">대기</span>
+  </header>
+
+  <section class="card">
+    <div id="status" class="status-line">대기 중</div>
+    <div class="progress"><div id="progress-bar"></div></div>
+    <div id="counter" class="counter">0 / 0회 전송</div>
+  </section>
+
+  <details class="card" id="prereq" open>
+    <summary>시작 전 확인</summary>
+    <ol>
+      <li>ChatGPT 대화 입력창에서 <code>@SSalMuk</code> 플러그인(앱)을 선택해 두었나요?</li>
+      <li>SSalMuk이 작업할 프로젝트 폴더를 가리키고 있나요? (예: <code>PerpDEX</code>)</li>
+      <li>프로젝트에 <code>ROADMAP.md</code> · <code>PROJECT_STATE.md</code>가 있으면 그 순서대로 진행합니다. 없으면 첫 단계에서 만들도록 합니다.</li>
+    </ol>
+  </details>
+
+  <div class="row">
+    <label for="prompt">후속 프롬프트</label>
+    <button id="reset" class="link" type="button">기본값으로 되돌리기</button>
+  </div>
+  <textarea id="prompt" spellcheck="false"></textarea>
+  <p class="hint">같은 문장이 매번 전송됩니다. 마지막 줄의 <code>AUTOPILOT: DONE</code> / <code>BLOCKED</code>를 보고 자동으로 멈춥니다.</p>
+
+  <label for="limit">최대 전송 횟수</label>
+  <input id="limit" type="number" min="1" step="1">
+
+  <label class="check">
+    <input id="strict" type="checkbox" checked>
+    <span>응답에 <code>AUTOPILOT:</code> 상태 줄이 없으면 중지 (도구 승인 대기·오류 대비, 권장)</span>
+  </label>
+
+  <div class="actions">
+    <button id="start" type="button">시작</button>
+    <button id="stop" type="button">중지</button>
+  </div>
+
+  <section class="card" style="margin-top:16px">
+    <div class="row">
+      <strong>진행 로그</strong>
+      <button id="clear-log" class="link" type="button">지우기</button>
+    </div>
+    <ul id="log"><li class="empty">아직 기록이 없습니다</li></ul>
+  </section>
+
+  <script src="src/defaults.js"></script>
+  <script src="src/sidepanel.js"></script>
+</body>
+</html>
