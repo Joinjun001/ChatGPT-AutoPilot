@@ -3,7 +3,9 @@
   window.__autopilotLoaded = true;
 
   const LOG_LIMIT = 60;
-  const MARKER_RE = /AUTOPILOT\s*:\s*(CONTINUE|DONE|BLOCKED)/gi;
+  // 줄 전체가 마커인 경우만 인정한다. 프롬프트 안의 안내 줄("AUTOPILOT: CONTINUE  (남은 작업이 있음)")이나
+  // 문장 중간의 언급은 마커로 보지 않는다.
+  const MARKER_RE = /^[\s*_`>-]*AUTOPILOT\s*[:：]\s*(CONTINUE|DONE|BLOCKED)[\s*_`.。!]*$/gim;
 
   let state = { running: false, sent: 0, limit: 0, prompt: '', strict: true };
   let lastBusy = false;
@@ -80,51 +82,46 @@
   const isDisabled = (button) =>
     !button || button.disabled || button.getAttribute('aria-disabled') === 'true';
 
-  // innerText는 화면 밖(렌더링 생략) 요소에서 비어 있을 수 있으므로 DOM 기준인 textContent를 쓴다.
-  const textOf = (el) => (el?.textContent || '');
-  const norm = (text) => text.replace(/\s+/g, ' ').trim();
+  // ---------- 응답 읽기 (HTML 구조에 의존하지 않음) ----------
+  // ChatGPT의 메시지 요소 구조·속성은 수시로 바뀌므로, 대화 영역의 "보이는 텍스트"만 사용한다.
+  // 방금 보낸 프롬프트의 첫 줄이 마지막으로 나온 위치를 기준점으로 삼고, 그 뒤의 텍스트를 응답으로 본다.
 
-  const USER_SEL = '[data-message-author-role="user"]';
-  const ASSISTANT_SEL = '[data-message-author-role="assistant"]';
-  const TURN_SEL = 'article, [data-testid^="conversation-turn"]';
+  const conversationRoot = () => document.querySelector('main') || document.body;
 
-  // 우리가 보낸 사용자 메시지를 찾는다. 프롬프트 앞부분이 들어 있는 가장 마지막 사용자 메시지,
-  // 없으면 마지막 사용자 메시지. (빈 사용자 요소가 뒤에 끼어 있어도 기준이 빗나가지 않도록)
-  function sentUserMessage() {
-    const users = [...document.querySelectorAll(USER_SEL)];
-    const key = norm(state.prompt).slice(0, 40);
-    if (key) {
-      for (let i = users.length - 1; i >= 0; i--) {
-        if (norm(textOf(users[i])).includes(key)) return users[i];
-      }
+  // innerText는 줄바꿈을 보존한다(마커를 줄 단위로 판정하는 데 필요). 지원하지 않으면 textContent.
+  const visibleText = (el) => (typeof el?.innerText === 'string' ? el.innerText : (el?.textContent || ''));
+
+  const promptLines = () => state.prompt.split('\n').map((line) => line.trim()).filter(Boolean);
+
+  // { found: 기준점 발견 여부, text: 기준점 이후 텍스트 }
+  function readAfterPrompt() {
+    const all = visibleText(conversationRoot());
+    const lines = promptLines();
+    const firstKey = (lines[0] || '').slice(0, 40);
+    const at = firstKey ? all.lastIndexOf(firstKey) : -1;
+    if (at < 0) return { found: false, text: '', total: all.length };
+
+    let start = at + firstKey.length;
+    // 프롬프트 본문이 화면에 다 펼쳐져 있으면 마지막 줄 뒤부터 응답으로 본다.
+    // (접혀 있어 마지막 줄이 안 보이면 그대로 둔다. 기본 프롬프트의 안내 줄은 마커 형식이 아니어서 안전)
+    const lastKey = lines.length > 1 ? lines[lines.length - 1].slice(0, 40) : '';
+    if (lastKey) {
+      const end = all.indexOf(lastKey, start);
+      if (end >= 0) start = end + lastKey.length;
     }
-    return users[users.length - 1] || null;
+    return { found: true, text: all.slice(start), total: all.length };
   }
 
-  const isAfter = (anchor, el) =>
-    !anchor || (Boolean(anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) && !anchor.contains(el));
-
-  // 보낸 메시지 이후의 응답 전체 텍스트.
-  // 도구를 쓰는 긴 응답은 assistant 블록 여러 개로 나뉘므로 마지막 하나만 읽으면 안 된다.
   function currentResponseText() {
-    const anchor = sentUserMessage();
-    const blocks = [...document.querySelectorAll(ASSISTANT_SEL)].filter((el) => isAfter(anchor, el));
-    if (blocks.length) return blocks.map(textOf).join('\n');
-
-    // 역할 속성이 바뀐 경우를 대비한 fallback: 보낸 메시지 뒤의 대화 턴 중 사용자 메시지가 없는 것
-    return [...document.querySelectorAll(TURN_SEL)]
-      .filter((turn) => isAfter(anchor, turn) && !turn.querySelector(USER_SEL))
-      .map(textOf)
-      .join('\n');
+    return readAfterPrompt().text;
   }
 
-  // 멈출 때 원인 파악용: 화면에서 찾은 요소 개수
+  // 멈출 때 원인 파악용 요약
   function domSummary() {
-    const anchor = sentUserMessage();
-    const users = document.querySelectorAll(USER_SEL).length;
-    const assistants = document.querySelectorAll(ASSISTANT_SEL);
-    const after = [...assistants].filter((el) => isAfter(anchor, el)).length;
-    return `사용자 ${users}, 응답 ${assistants.length}, 보낸 메시지 이후 응답 ${after}`;
+    const { found, text, total } = readAfterPrompt();
+    return found
+      ? `보낸 프롬프트 찾음, 이후 ${text.length}자 (전체 ${total}자)`
+      : `보낸 프롬프트를 화면 텍스트에서 찾지 못함 (전체 ${total}자)`;
   }
 
   // 대화 맨 아래로 스크롤해 최신 응답이 화면에 그려지게 한다.
@@ -132,11 +129,28 @@
     const button = firstVisible([
       'button[data-testid="scroll-to-bottom"]',
       'button[aria-label*="Scroll to bottom"]',
-      'button[aria-label*="아래로 스크롤"]'
+      'button[aria-label*="아래로 스크롤"]',
+      'button[aria-label*="맨 아래"]'
     ]);
     if (button) button.click();
-    const turns = document.querySelectorAll(TURN_SEL);
-    turns[turns.length - 1]?.scrollIntoView?.({ block: 'end' });
+
+    // 스크롤 가능한 가장 큰 영역을 맨 아래로 (찾은 영역은 재사용)
+    const scroller = findScroller();
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+  }
+
+  let cachedScroller = null;
+  function findScroller() {
+    if (cachedScroller?.isConnected && cachedScroller.scrollHeight > cachedScroller.clientHeight) return cachedScroller;
+    const root = conversationRoot();
+    let best = null;
+    for (const el of [root, ...root.querySelectorAll('div')]) {
+      if (el.scrollHeight <= el.clientHeight + 20) continue;
+      if (!/(auto|scroll)/.test(getComputedStyle(el).overflowY)) continue;
+      if (!best || el.clientHeight > best.clientHeight) best = el;
+    }
+    cachedScroller = best;
+    return best;
   }
 
   // 텍스트에서 가장 마지막에 나온 AUTOPILOT 마커를 돌려준다. 없으면 null.
