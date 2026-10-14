@@ -80,20 +80,63 @@
   const isDisabled = (button) =>
     !button || button.disabled || button.getAttribute('aria-disabled') === 'true';
 
-  const textOf = (el) => (el?.innerText || el?.textContent || '');
+  // innerText는 화면 밖(렌더링 생략) 요소에서 비어 있을 수 있으므로 DOM 기준인 textContent를 쓴다.
+  const textOf = (el) => (el?.textContent || '');
+  const norm = (text) => text.replace(/\s+/g, ' ').trim();
 
-  // 마지막 사용자 메시지 이후의 응답 전체 텍스트.
+  const USER_SEL = '[data-message-author-role="user"]';
+  const ASSISTANT_SEL = '[data-message-author-role="assistant"]';
+  const TURN_SEL = 'article, [data-testid^="conversation-turn"]';
+
+  // 우리가 보낸 사용자 메시지를 찾는다. 프롬프트 앞부분이 들어 있는 가장 마지막 사용자 메시지,
+  // 없으면 마지막 사용자 메시지. (빈 사용자 요소가 뒤에 끼어 있어도 기준이 빗나가지 않도록)
+  function sentUserMessage() {
+    const users = [...document.querySelectorAll(USER_SEL)];
+    const key = norm(state.prompt).slice(0, 40);
+    if (key) {
+      for (let i = users.length - 1; i >= 0; i--) {
+        if (norm(textOf(users[i])).includes(key)) return users[i];
+      }
+    }
+    return users[users.length - 1] || null;
+  }
+
+  const isAfter = (anchor, el) =>
+    !anchor || (Boolean(anchor.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) && !anchor.contains(el));
+
+  // 보낸 메시지 이후의 응답 전체 텍스트.
   // 도구를 쓰는 긴 응답은 assistant 블록 여러 개로 나뉘므로 마지막 하나만 읽으면 안 된다.
   function currentResponseText() {
-    const users = document.querySelectorAll('[data-message-author-role="user"]');
-    const lastUser = users[users.length - 1];
-    const blocks = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
-      .filter((el) => !lastUser || (lastUser.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+    const anchor = sentUserMessage();
+    const blocks = [...document.querySelectorAll(ASSISTANT_SEL)].filter((el) => isAfter(anchor, el));
     if (blocks.length) return blocks.map(textOf).join('\n');
 
-    // 역할 속성이 바뀐 경우를 대비한 fallback: 마지막 대화 턴 전체
-    const turns = document.querySelectorAll('article, [data-testid^="conversation-turn"]');
-    return textOf(turns[turns.length - 1]);
+    // 역할 속성이 바뀐 경우를 대비한 fallback: 보낸 메시지 뒤의 대화 턴 중 사용자 메시지가 없는 것
+    return [...document.querySelectorAll(TURN_SEL)]
+      .filter((turn) => isAfter(anchor, turn) && !turn.querySelector(USER_SEL))
+      .map(textOf)
+      .join('\n');
+  }
+
+  // 멈출 때 원인 파악용: 화면에서 찾은 요소 개수
+  function domSummary() {
+    const anchor = sentUserMessage();
+    const users = document.querySelectorAll(USER_SEL).length;
+    const assistants = document.querySelectorAll(ASSISTANT_SEL);
+    const after = [...assistants].filter((el) => isAfter(anchor, el)).length;
+    return `사용자 ${users}, 응답 ${assistants.length}, 보낸 메시지 이후 응답 ${after}`;
+  }
+
+  // 대화 맨 아래로 스크롤해 최신 응답이 화면에 그려지게 한다.
+  function scrollToLatest() {
+    const button = firstVisible([
+      'button[data-testid="scroll-to-bottom"]',
+      'button[aria-label*="Scroll to bottom"]',
+      'button[aria-label*="아래로 스크롤"]'
+    ]);
+    if (button) button.click();
+    const turns = document.querySelectorAll(TURN_SEL);
+    turns[turns.length - 1]?.scrollIntoView?.({ block: 'end' });
   }
 
   // 텍스트에서 가장 마지막에 나온 AUTOPILOT 마커를 돌려준다. 없으면 null.
@@ -197,6 +240,7 @@
 
     while (Date.now() < deadline) {
       if (!state.running || isBusy()) return null;
+      scrollToLatest();
       const text = currentResponseText();
       if (text !== lastText) {
         lastText = text;
@@ -232,7 +276,7 @@
     if (marker === 'BLOCKED') return stop('ChatGPT가 진행 불가(AUTOPILOT: BLOCKED)를 보고했습니다. 응답을 확인하세요', 'blocked');
     if (!marker && state.strict && state.sent > 0) {
       const seen = tail(text);
-      return stop(`응답에 AUTOPILOT 상태 줄이 없습니다 (도구 승인 대기·오류 가능). 읽은 끝부분: "${seen || '(비어 있음)'}"`, 'blocked');
+      return stop(`응답에 AUTOPILOT 상태 줄이 없습니다 (도구 승인 대기·오류 가능). 읽은 끝부분: "${seen || '(비어 있음)'}" [${domSummary()}]`, 'blocked');
     }
     if (state.sent >= state.limit) return stop('최대 전송 횟수까지 작업 완료');
 
