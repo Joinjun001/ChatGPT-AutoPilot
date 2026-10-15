@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT AutoPilot",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "플러그인으로 작업하는 ChatGPT 대화에 후속 프롬프트를 반복 전송해 작업을 반자동으로 이어 갑니다.",
   "minimum_chrome_version": "116",
   "permissions": [
