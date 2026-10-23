@@ -9,6 +9,18 @@ function dynamic(prompt) { return response('작업 완료\n' + P.BEGIN + '\n' + 
 test('동적 응답에서 새로운 프롬프트 추출', () => {
   assert.deepEqual(P.parseResponse(dynamic('M2-T3 주문 API 구현'), 'dynamic'), {status:'CONTINUE', nextPrompt:'M2-T3 주문 API 구현'});
 });
+test('실제 로그의 ChatGPT UI footer를 제거하고 동적 프롬프트를 이어받는다', () => {
+  const raw = dynamic('M2-T2 EIP-712 구현') + ' ChatGPT can make mistakes. Check important info. Latest response Thinking effort High';
+  assert.deepEqual(P.parseResponse(raw, 'dynamic'), {status:'CONTINUE', nextPrompt:'M2-T2 EIP-712 구현'});
+  assert.equal(P.parseResponse('완료\nAUTOPILOT: DONE\nChatGPT can make mistakes. Check important info.', 'dynamic').status, 'DONE');
+  assert.equal(P.parseResponse('대기\nAUTOPILOT: BLOCKED\nChatGPT can make mistakes. Check important info. Latest response Thinking effort Medium', 'dynamic').status, 'BLOCKED');
+});
+
+test('UI footer와 다른 실제 후행 대화 내용은 잘못된 응답으로 중지한다', () => {
+  assert.ok(P.parseResponse(dynamic('다음 TASK') + '\n이어지는 사용자 문장\nChatGPT can make mistakes. Check important info.', 'dynamic').error);
+  assert.ok(P.parseResponse(dynamic('다음 TASK') + '\n임의의 미등록 footer', 'dynamic').error);
+});
+
 test('고정 모드는 기존 프롬프트를 반복한다', () => {
   assert.deepEqual(P.parseResponse(response('테스트 완료'), 'fixed'), {status:'CONTINUE', nextPrompt:null});
 });

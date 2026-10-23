@@ -5,13 +5,20 @@
   const BEGIN = 'AUTOPILOT_NEXT_PROMPT_START';
   const END = 'AUTOPILOT_NEXT_PROMPT_END';
   const MAX_PROMPT = 8000;
+  // ChatGPT 대화 영역(main.innerText)의 UI footer가 실제 AI 응답 뒤에 붙는 경우가 있다.
+  // 이 알려진 문자열만 말미에서 제거하고, 임의의 후행 문장은 절대로 허용하지 않는다.
+  const CHATGPT_FOOTER_RE = /\s+ChatGPT can make mistakes\.\s*Check important info\.(?:\s+Latest response(?:\s+Thinking effort\s+(?:Instant|Medium|High|Extra High))?)?\s*$/i;
+
+  function stripChatGPTFooter(value) {
+    return String(value || '').trim().replace(CHATGPT_FOOTER_RE, '').trimEnd();
+  }
 
   function normalize(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
   function parseResponse(raw, mode) {
-    const text = String(raw || '').trim();
+    const text = stripChatGPTFooter(raw);
     const terminal = text.match(TERMINAL);
     if (!terminal) return { status: null, error: '응답 마지막에 유효한 AUTOPILOT 상태 줄이 없습니다.' };
     const status = terminal[1].toUpperCase();
