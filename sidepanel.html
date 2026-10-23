@@ -64,11 +64,13 @@
     label { display: block; font-weight: 600; margin: 12px 0 4px; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .row label { margin: 12px 0 4px; }
-    textarea, input[type="number"] {
+    textarea, input[type="number"], input[type="text"], select {
       width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
       background: var(--bg); color: var(--text); font: inherit;
     }
     textarea { min-height: 220px; resize: vertical; font-size: 12px; }
+    #preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow-y: auto; font: 11px/1.5 ui-monospace, Consolas, monospace; }
+    #resume { border-color: var(--accent); color: var(--accent); }
     .check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; margin-top: 10px; }
     .check input { margin-top: 3px; }
     .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
@@ -110,16 +112,32 @@
     </ol>
   </details>
 
+  <label for="mode">실행 모드</label>
+  <select id="mode">
+    <option value="dynamic">AI 생성 프롬프트 (권장)</option>
+    <option value="fixed">고정 프롬프트 반복</option>
+  </select>
+  <label for="scope">고정 작업 범위 (동적 모드 필수)</label>
+  <input id="scope" type="text" placeholder="예: /shared/PerpDEX" spellcheck="false">
+  <p class="hint">매 회차 고정 지시에 포함됩니다. 실제 실행 권한은 연결된 플러그인이 결정합니다.</p>
   <div class="row">
-    <label for="prompt">후속 프롬프트</label>
+    <label for="prompt">최초 프롬프트</label>
     <button id="reset" class="link" type="button">기본값으로 되돌리기</button>
   </div>
   <textarea id="prompt" spellcheck="false"></textarea>
-  <p class="hint">같은 문장이 매번 전송됩니다. 마지막 줄의 <code>AUTOPILOT: DONE</code> / <code>BLOCKED</code>를 보고 자동으로 멈춥니다.</p>
+  <p class="hint">동적 모드는 AI가 매번 다음 TASK 프롬프트를 출력합니다. 완료·차단·형식 오류는 자동 중지됩니다.</p>
 
   <label for="limit">최대 전송 횟수</label>
   <input id="limit" type="number" min="1" step="1">
 
+  <label for="retries">화면·응답 재확인 횟수</label>
+  <select id="retries">
+    <option value="0">0회</option>
+    <option value="1">1회</option>
+    <option value="2">2회 (권장)</option>
+    <option value="3">3회</option>
+  </select>
+  <p class="hint">전송 전 UI 및 응답 판독만 재확인합니다. 클릭 후 중복 전송하지 않습니다.</p>
   <label class="check">
     <input id="strict" type="checkbox" checked>
     <span>응답에 <code>AUTOPILOT:</code> 상태 줄이 없으면 중지 (도구 승인 대기·오류 대비, 권장)</span>
@@ -128,7 +146,13 @@
   <div class="actions">
     <button id="start" type="button">시작</button>
     <button id="stop" type="button">중지</button>
+    <button id="resume" type="button" disabled>재개</button>
   </div>
+  <section class="card">
+    <strong>다음에 전송할 프롬프트</strong>
+    <p class="hint">새로고침 후에는 자동 실행하지 않습니다. 재개를 눌러 복구합니다.</p>
+    <div id="preview">아직 다음 프롬프트가 없습니다.</div>
+  </section>
 
   <section class="card" style="margin-top:16px">
     <div class="row">

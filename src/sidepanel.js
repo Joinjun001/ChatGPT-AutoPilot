@@ -8,6 +8,11 @@ const els = {
   prompt: $('#prompt'),
   limit: $('#limit'),
   strict: $('#strict'),
+  mode: $('#mode'),
+  scope: $('#scope'),
+  retries: $('#retries'),
+  resume: $('#resume'),
+  preview: $('#preview'),
   start: $('#start'),
   stop: $('#stop'),
   reset: $('#reset'),
@@ -29,10 +34,13 @@ els.limit.max = String(AUTOPILOT_MAX_LIMIT);
 // ---------- 설정 저장/복원 ----------
 
 async function loadSettings() {
-  const data = await chrome.storage.local.get(['settingPrompt', 'settingLimit', 'settingStrict']);
+  const data = await chrome.storage.local.get(['settingPrompt', 'settingLimit', 'settingStrict', 'settingMode', 'settingScope', 'settingRetries']);
   els.prompt.value = data.settingPrompt ?? AUTOPILOT_DEFAULT_PROMPT;
   els.limit.value = String(data.settingLimit ?? AUTOPILOT_DEFAULT_LIMIT);
   els.strict.checked = data.settingStrict ?? true;
+  els.mode.value = data.settingMode ?? 'dynamic';
+  els.scope.value = data.settingScope ?? '';
+  els.retries.value = String(data.settingRetries ?? 2);
 }
 
 function saveSettings() {
@@ -40,13 +48,19 @@ function saveSettings() {
   void chrome.storage.local.set({
     settingPrompt: els.prompt.value,
     settingLimit: Number.isInteger(limit) ? limit : AUTOPILOT_DEFAULT_LIMIT,
-    settingStrict: els.strict.checked
+    settingStrict: els.strict.checked,
+    settingMode: els.mode.value,
+    settingScope: els.scope.value,
+    settingRetries: Number(els.retries.value)
   });
 }
 
 els.prompt.addEventListener('input', saveSettings);
 els.limit.addEventListener('input', saveSettings);
 els.strict.addEventListener('change', saveSettings);
+els.mode.addEventListener('change', saveSettings);
+els.scope.addEventListener('input', saveSettings);
+els.retries.addEventListener('change', saveSettings);
 els.reset.addEventListener('click', () => {
   els.prompt.value = AUTOPILOT_DEFAULT_PROMPT;
   saveSettings();
@@ -89,14 +103,19 @@ function renderStatus(data) {
 
   els.start.disabled = running;
   els.stop.disabled = !running;
+  els.resume.disabled = running || !data.autopilotCanResume;
+  els.preview.textContent = data.autopilotNextPrompt || '아직 다음 프롬프트가 없습니다.';
   els.prompt.disabled = running;
   els.limit.disabled = running;
   els.strict.disabled = running;
+  els.mode.disabled = running;
+  els.scope.disabled = running;
+  els.retries.disabled = running;
 
   renderLog(data.autopilotLog);
 }
 
-const STATUS_KEYS = ['autopilotStatus', 'autopilotPhase', 'autopilotSent', 'autopilotRunLimit', 'autopilotRunning', 'autopilotLog'];
+const STATUS_KEYS = ['autopilotStatus', 'autopilotPhase', 'autopilotSent', 'autopilotRunLimit', 'autopilotRunning', 'autopilotLog', 'autopilotCanResume', 'autopilotNextPrompt'];
 
 async function refreshStatus() {
   try {
@@ -131,7 +150,8 @@ async function act(action) {
   const limit = Number(els.limit.value);
 
   if (action === 'start') {
-    if (!prompt) return showLocalError('후속 프롬프트가 비어 있습니다');
+    if (!prompt) return showLocalError('최초 프롬프트가 비어 있습니다');
+    if (els.mode.value === 'dynamic' && !els.scope.value.trim()) return showLocalError('동적 모드에서는 고정 작업 범위를 입력하세요');
     if (!Number.isInteger(limit) || limit < 1 || limit > AUTOPILOT_MAX_LIMIT) {
       return showLocalError(`최대 전송 횟수는 1~${AUTOPILOT_MAX_LIMIT} 사이 정수여야 합니다`);
     }
@@ -142,7 +162,10 @@ async function act(action) {
       action,
       prompt,
       limit,
-      strict: els.strict.checked
+      strict: els.strict.checked,
+      mode: els.mode.value,
+      scope: els.scope.value.trim(),
+      retries: Number(els.retries.value)
     });
     if (result?.message) els.status.textContent = result.message;
   } catch {
@@ -152,6 +175,7 @@ async function act(action) {
 
 els.start.addEventListener('click', () => void act('start'));
 els.stop.addEventListener('click', () => void act('stop'));
+els.resume.addEventListener('click', () => void act('resume'));
 
 void loadSettings();
 void refreshStatus();
