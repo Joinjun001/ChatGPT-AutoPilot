@@ -80,6 +80,9 @@ test('두 회차를 동적 프롬프트로 실행하고 DONE에서 중지 (DOM �
     assert.match(sent[0], /M2-T1 마무리/);
     assert.match(sent[1], /M2-T2 서명 검증 진행/);
     assert.ok(sent.every(text=>text.includes('/shared/PerpDEX')));
+    assert.ok(sent.every(text=>text.includes('이미 허용된 프로젝트 파일 편집')));
+    assert.ok(sent.every(text=>text.includes('BLOCKED는 실제 필수 외부 권한·승인')));
+    assert.ok(sent.every(text=>text.includes('보안 제한 우회')));
     assert.equal(values.autopilotCanResume,false);
   } finally {
     for(const x of intervals)clearInterval(x);

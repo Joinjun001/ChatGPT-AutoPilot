@@ -33,9 +33,28 @@ els.limit.max = String(AUTOPILOT_MAX_LIMIT);
 
 // ---------- 설정 저장/복원 ----------
 
+// 기존 0.4.1 번들 기본값을 수정 없이 저장해 둔 사용자만 새 기본 정책으로 전환.
+// 내용으로 해시를 검증하므로 사용자가 편집한 최초 프롬프트는 덮어쓰지 않는다.
+const LEGACY_DEFAULT_SHA256 = 'c20e9454adeafb7f15395211a034aa7cdee33a1e320141498118ac173886d619';
+async function isUneditedLegacyDefault(prompt) {
+  if (typeof prompt !== 'string' || prompt.length !== 1638) return false;
+  try {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(prompt));
+    const hex = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2,'0')).join('');
+    return hex === LEGACY_DEFAULT_SHA256;
+  } catch {
+    return false;
+  }
+}
+
 async function loadSettings() {
   const data = await chrome.storage.local.get(['settingPrompt', 'settingLimit', 'settingStrict', 'settingMode', 'settingScope', 'settingRetries']);
-  els.prompt.value = data.settingPrompt ?? AUTOPILOT_DEFAULT_PROMPT;
+  let prompt = data.settingPrompt;
+  if (await isUneditedLegacyDefault(prompt)) {
+    prompt = AUTOPILOT_DEFAULT_PROMPT;
+    await chrome.storage.local.set({ settingPrompt: prompt });
+  }
+  els.prompt.value = prompt ?? AUTOPILOT_DEFAULT_PROMPT;
   els.limit.value = String(data.settingLimit ?? AUTOPILOT_DEFAULT_LIMIT);
   els.strict.checked = data.settingStrict ?? true;
   els.mode.value = data.settingMode ?? 'dynamic';
