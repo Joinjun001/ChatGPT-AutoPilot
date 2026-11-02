@@ -329,6 +329,7 @@
 
   function start(message) {
     if (state.running) return '이미 실행 중입니다.';
+    if (window.__autopilotPlanningActive) return '설계 분석이 진행 중입니다. 계획 완료 후 실행하세요.';
     const error = validateStart(message);
     if (error) return error;
     state = {

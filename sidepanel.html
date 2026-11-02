@@ -112,6 +112,38 @@
     </ol>
   </details>
 
+  <section class="card" id="plan-area">
+    <h2 style="font-size:15px;margin:0 0 8px">프로젝트별 계획 수립 (Plan Mode)</h2>
+    <p class="hint">프로젝트 분석 → 추천 선택지 또는 직접 입력 → 계획 확인 → 확정 후 실행</p>
+    <label for="plan-project">프로젝트 선택</label>
+    <select id="plan-project"></select>
+    <div class="row"><label for="plan-name">프로젝트 이름</label><span class="hint">새 프로젝트도 등록 가능</span></div>
+    <input id="plan-name" type="text" maxlength="100" placeholder="예: Project Salvager">
+    <label for="plan-scope">프로젝트 경로</label>
+    <input id="plan-scope" type="text" placeholder="/shared/project-salvager">
+    <div class="actions">
+      <button id="plan-save" type="button">프로젝트 저장</button>
+      <button id="plan-analyze" type="button">AI 프로젝트 분석</button>
+    </div>
+    <p class="hint">분석은 ChatGPT에 연결된 MCP로 프로젝트를 읽습니다. 실제 파일 수정 권한은 사용하지 않도록 지시합니다.</p>
+    <div id="plan-status" class="status-line" style="margin-top:12px">계획을 생성하려면 프로젝트를 선택하세요.</div>
+    <p id="plan-summary" class="hint"></p>
+    <div id="plan-questions"></div>
+    <button id="plan-submit" type="button" hidden style="margin-top:12px;width:100%">답변으로 개발 계획 생성</button>
+    <div id="plan-review" hidden>
+      <h3 style="font-size:14px;margin-bottom:4px">실행 전 계획 검토</h3>
+      <div id="plan-result" style="white-space:pre-wrap;overflow-wrap:anywhere"></div>
+      <div class="actions">
+        <button id="plan-approve" type="button">계획 확정</button>
+        <button id="plan-start" type="button">계획으로 실행</button>
+      </div>
+      <p class="hint">확정 후 실행하면 기존 AutoPilot 동적 모드가 선택한 계획에 따라 동작합니다.</p>
+    </div>
+  </section>
+
+  <details class="card" open id="legacy-settings">
+    <summary>실행 횟수 · 고급 설정 · 기존 수동 모드</summary>
+    <p class="hint">계획 확정 후 실행 횟수(예: 50회)를 정하거나 직접 프롬프트를 작성할 수 있습니다.</p>
   <label for="mode">실행 모드</label>
   <select id="mode">
     <option value="dynamic">AI 생성 프롬프트 (권장)</option>
@@ -148,6 +180,7 @@
     <button id="stop" type="button">중지</button>
     <button id="resume" type="button" disabled>재개</button>
   </div>
+  </details>
   <section class="card">
     <strong>다음에 전송할 프롬프트</strong>
     <p class="hint">새로고침 후에는 자동 실행하지 않습니다. 재개를 눌러 복구합니다.</p>
@@ -163,6 +196,8 @@
   </section>
 
   <script src="src/defaults.js"></script>
+  <script src="src/planning.js"></script>
   <script src="src/sidepanel.js"></script>
+  <script src="src/plan-panel.js"></script>
 </body>
 </html>
