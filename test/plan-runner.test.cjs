@@ -62,11 +62,15 @@ test('Plan Mode는 질문→계획 응답을 저장하지만 개발 루프를 �
   listener({action:'planAnalyze',scope:'/shared/project-salvager'},null,()=>{});
   await waitFor('questions');
   assert.equal(values.autopilotPlanQuestions.questions[0].options[2],'플레이');
+  assert.equal(values['autopilotPlanQuestions:/shared/project-salvager'].questions[0].options[2],'플레이');
+  assert.equal(values['autopilotPlanPhase:/shared/project-salvager'],'questions');
   assert.equal(sent.length,1);
   assert.match(sent[0],/읽기 전용/);
   listener({action:'planFinalize',scope:'/shared/project-salvager',questions:values.autopilotPlanQuestions,answers:['플레이']},null,()=>{});
   await waitFor('review');
   assert.equal(values.autopilotPlanResult.title,'플레이 경험');
+  assert.equal(values['autopilotPlanResult:/shared/project-salvager'].title,'플레이 경험');
+  assert.equal(values['autopilotPlanPhase:/shared/project-salvager'],'review');
   assert.equal(sent.length,2);
   assert.match(sent[1],/코드를 수정·커밋·push·배포하지 마세요/);
   assert.equal(values.autopilotRunning,false);

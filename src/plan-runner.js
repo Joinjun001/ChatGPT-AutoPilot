@@ -8,6 +8,7 @@
   if (!D || !C) throw Error('planning.js 또는 composer-ui.js 누락');
 
   let active = false;
+  const planKey=(scope,field)=>'autopilotPlan'+field+':'+scope;
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const isBusy = () => Boolean(document.querySelector('button[data-testid="stop-button"], button[aria-label="Stop generating"]'));
   const status = async (phase, message, scope, kind='questions') => {
@@ -16,7 +17,8 @@
       await chrome.storage.local.set({autopilotDiscoverPhase:phase,autopilotDiscoverStatus:message});
     } else {
       await chrome.storage.local.set({autopilotPlanPhase:phase, autopilotPlanStatus:message,
-        ...(scope ? {autopilotPlanScope:scope} : {})});
+        ...(scope ? {autopilotPlanScope:scope,
+          [planKey(scope,'Phase')]:phase,[planKey(scope,'Status')]:message} : {})});
     }
   };
   const editor=()=>C.findEditor(document);
@@ -120,7 +122,11 @@
             const values=kind==='questions'
               ? {autopilotPlanQuestions:out.value,autopilotPlanResult:null}
               : {autopilotPlanResult:out.value};
-            await chrome.storage.local.set({...values,autopilotPlanScope:scope});
+            const scoped=kind==='questions'
+              ? {[planKey(scope,'Questions')]:out.value,
+                [planKey(scope,'Result')]:null,[planKey(scope,'Answers')]:null}
+              : {[planKey(scope,'Result')]:out.value};
+            await chrome.storage.local.set({...values,...scoped,autopilotPlanScope:scope});
             void A?.record(chrome,{event:'plan_result',scope,planId:id,status:kind}).catch(()=>undefined);
             await status(kind==='questions'?'questions':'review','AI 응답을 확인했습니다. 사용자 선택을 기다립니다.',scope,kind);
           }

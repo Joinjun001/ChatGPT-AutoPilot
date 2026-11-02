@@ -15,10 +15,12 @@
   };
   let profiles=[], selectedId='new', planData=null, planQuestions=null, questionSignature='', discoverySignature='', pending=false;
   const current=()=>profiles.find(x=>x.id===selectedId) || null;
+  // 설계 초안은 프로젝트 경로별 키로 저장한다. 기존 전역 키는 구버전 마이그레이션에만 사용한다.
+  const planKey=(scope,field)=>'autopilotPlan'+field+':'+scope;
   const renderMessage=message=>{ui.status.textContent=message;};
   const renderDiscoveryMessage=message=>{
     ui.discoverStatus.textContent=message;
-    renderMessage(message);
+    if(!planQuestions && !planData)renderMessage(message);
   };
   async function persist() {
     await chrome.storage.local.set({
@@ -87,9 +89,26 @@
     }
     refreshProjects();choose(item.id);
     await persist();
+    await refreshPlanStorage();
     renderMessage('프로젝트 설정을 저장했습니다.');
   }
-  function showQuestions(value) {
+  function answerDraft() {
+    return planQuestions?.questions.map((_,i)=>{
+      const selected=ui.questions.querySelector('input[name="plan-q'+i+'"]:checked');
+      const custom=ui.questions.querySelector('textarea[data-question-index="'+i+'"]');
+      return {selected:selected?.value || '0',custom:custom?.value || ''};
+    }) || [];
+  }
+  async function saveAnswers() {
+    const scope=current()?.scope;
+    if(!scope || !planQuestions)return;
+    try {
+      await chrome.storage.local.set({[planKey(scope,'Answers')]:answerDraft()});
+    } catch(error) {
+      renderMessage('질문 답변 저장 실패: '+(error?.message || String(error)));
+    }
+  }
+  function showQuestions(value,savedAnswers) {
     const signature=JSON.stringify(value);
     if (signature===questionSignature) return;
     questionSignature=signature;
@@ -97,6 +116,8 @@
     ui.questions.replaceChildren();
     ui.summary.textContent=value.summary;
     value.questions.forEach((q,i)=>{
+      const draft=Array.isArray(savedAnswers) ? savedAnswers[i] : null;
+      const selected=['0','1','2','custom'].includes(draft?.selected) ? draft.selected : '0';
       const block=document.createElement('fieldset');
       block.style.cssText='border:1px solid var(--border);border-radius:8px;margin:12px 0;padding:10px';
       const legend=document.createElement('legend');
@@ -107,7 +128,8 @@
         label.className='check';
         const input=document.createElement('input');
         input.type='radio';input.name='plan-q'+i;input.value=String(j);
-        if(j===0) input.checked=true;
+        input.checked=selected===String(j);
+        input.addEventListener('change',()=>void saveAnswers());
         label.append(input,document.createTextNode((j+1)+'. '+option));
         block.append(label);
       });
@@ -115,13 +137,24 @@
       custom.className='check';
       const customRadio=document.createElement('input');
       customRadio.type='radio';customRadio.name='plan-q'+i;customRadio.value='custom';
+      customRadio.checked=selected==='custom';
+      customRadio.addEventListener('change',()=>void saveAnswers());
       custom.append(customRadio,document.createTextNode('직접 입력'));
       block.append(custom);
       const input=document.createElement('textarea');
       input.rows=2;input.placeholder='원하는 방향 직접 입력 (선택 시 필수)';
-      input.style.minHeight='56px';
+      input.style.minHeight='56px';input.maxLength=1500;
       input.dataset.questionIndex=String(i);
-      input.addEventListener('input',()=>{if(input.value.trim()) customRadio.checked=true;});
+      input.value=typeof draft?.custom==='string' ? draft.custom.slice(0,1500) : '';
+      input.addEventListener('input',()=>{
+        if(input.value.trim()){
+          customRadio.checked=true;
+          block.querySelectorAll('input[name="plan-q'+i+'"]').forEach(radio=>{
+            if(radio!==customRadio) radio.checked=false;
+          });
+        }
+        void saveAnswers();
+      });
       block.append(input);ui.questions.append(block);
     });
     ui.submit.hidden=false;
@@ -197,13 +230,35 @@
     }
   }
   async function refreshPlanStorage() {
-    const data=await chrome.storage.local.get(['autopilotPlanQuestions','autopilotPlanResult','autopilotPlanScope','autopilotPlanPhase','autopilotPlanStatus']);
-    if(!current() || data.autopilotPlanScope!==current().scope) return;
-    if(data.autopilotPlanStatus) renderMessage(data.autopilotPlanStatus);
-    if(data.autopilotPlanPhase==='questions' && data.autopilotPlanQuestions) showQuestions(data.autopilotPlanQuestions);
-    if(data.autopilotPlanPhase==='review' && data.autopilotPlanResult) {
-      showPlan(data.autopilotPlanResult);
+    const scope=current()?.scope;
+    if(!scope)return;
+    const keys=['Phase','Status','Questions','Result','Answers'].map(field=>planKey(scope,field));
+    const data=await chrome.storage.local.get([...keys,
+      'autopilotPlanQuestions','autopilotPlanResult','autopilotPlanScope',
+      'autopilotPlanPhase','autopilotPlanStatus']);
+    if(current()?.scope!==scope)return;
+    // v0.6.3에서 저장된 질문/계획을 최초 접근 때만 해당 프로젝트로 가져온다.
+    if(data[keys[0]]===undefined && data[keys[2]]===undefined &&
+        data[keys[3]]===undefined && data.autopilotPlanScope===scope &&
+        (data.autopilotPlanQuestions || data.autopilotPlanResult)){
+      const migrated={
+        [keys[0]]:data.autopilotPlanPhase,
+        [keys[1]]:data.autopilotPlanStatus,
+        [keys[2]]:data.autopilotPlanQuestions || null,
+        [keys[3]]:data.autopilotPlanResult || null
+      };
+      await chrome.storage.local.set(migrated);
+      Object.assign(data,migrated);
+      if(current()?.scope!==scope)return;
+    }
+    if(data[keys[1]])renderMessage(data[keys[1]]);
+    if(data[keys[3]]) {
+      if(planData!==data[keys[3]])showPlan(data[keys[3]]);
+      ui.questions.replaceChildren();
+      planQuestions=null;questionSignature='';
       ui.submit.hidden=true;
+    } else if(data[keys[2]]) {
+      showQuestions(data[keys[2]],data[keys[4]]);
     }
   }
   async function refreshDiscovery() {
@@ -228,10 +283,13 @@
     const result=PM.mergeDiscovered(profiles,checked,()=>crypto.randomUUID());
     profiles=result.profiles;
     refreshProjects();
-    // 검색 전에 선택한 프로젝트와 승인된 계획은 유지한다.
-    const keep=current();
-    if(!keep && profiles.length)selectedId=profiles[0].id;
-    choose(selectedId);
+    // 기존 프로젝트는 재선택하지 않는다. choose()가 작성 중인 질문을 초기화하기 때문이다.
+    if(!current() && profiles.length){
+      choose(profiles[0].id);
+      await refreshPlanStorage();
+    }else{
+      ui.project.value=selectedId;
+    }
     await persist();
     renderDiscoveryMessage(checked.summary+' · 검색 '+checked.projects.length+'개, 신규 등록 '+result.added+'개');
   }
@@ -261,7 +319,12 @@
     await persist();
     questionSignature='';planQuestions=null;planData=null;
     ui.questions.replaceChildren();ui.summary.textContent='';ui.submit.hidden=true;ui.review.hidden=true;
-    await chrome.storage.local.set({autopilotPlanQuestions:null,autopilotPlanResult:null,autopilotPlanScope:item.scope});
+    await chrome.storage.local.set({
+      autopilotPlanQuestions:null,autopilotPlanResult:null,autopilotPlanScope:item.scope,
+      [planKey(item.scope,'Questions')]:null,[planKey(item.scope,'Result')]:null,
+      [planKey(item.scope,'Answers')]:null,[planKey(item.scope,'Phase')]:'analyzing',
+      [planKey(item.scope,'Status')]:'프로젝트 분석 요청 중'
+    });
     await send('planAnalyze',{scope:item.scope});
   });
   ui.submit.addEventListener('click',async()=>{
@@ -302,8 +365,11 @@
     $('#start').click();
   });
   chrome.storage.onChanged.addListener((changes,area)=>{
-    if(area==='local' && Object.keys(changes).some(x=>x.startsWith('autopilotPlan'))) void refreshPlanStorage();
-    if(area==='local' && Object.keys(changes).some(x=>x.startsWith('autopilotDiscover'))) void refreshDiscovery();
+    if(area!=='local')return;
+    const scope=current()?.scope;
+    if(scope && ['Questions','Result','Phase','Status'].some(field=>planKey(scope,field) in changes))
+      void refreshPlanStorage();
+    if(Object.keys(changes).some(x=>x.startsWith('autopilotDiscover'))) void refreshDiscovery();
   });
   void (async()=>{
     try{
