@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const P = require('../src/protocol.js');
+const C_SOURCE=fs.readFileSync(require.resolve('../src/composer-ui.js'),'utf8');
 
 test('두 회차를 동적 프롬프트로 실행하고 DONE에서 중지 (DOM 모의 통합 검사)', {timeout:20000}, async () => {
   let transcript = '';
@@ -15,7 +16,7 @@ test('두 회차를 동적 프롬프트로 실행하고 DONE에서 중지 (DOM �
   const timeouts = [];
   const visible = {getClientRects:()=>[1], getAttribute:()=>null};
   class FakeTextarea {
-    constructor() { this._value = ''; }
+    constructor() { this._value = ''; this.tagName='TEXTAREA'; }
     get value() { return this._value; }
     set value(x) { this._value=x; }
     getClientRects() { return [1]; }
@@ -68,6 +69,7 @@ test('두 회차를 동적 프롬프트로 실행하고 DONE에서 중지 (DOM �
     setTimeout(fn,ms){const handle=setTimeout(fn,ms);timeouts.push(handle);return handle;},
   };
   try {
+    vm.runInNewContext(C_SOURCE,ctx);
     vm.runInNewContext(fs.readFileSync(require.resolve('../src/content.js'),'utf8'),ctx);
     listener({action:'start',mode:'dynamic',scope:'/shared/PerpDEX',prompt:'M2-T1 마무리',limit:2,retries:1,strict:true},null,()=>{});
     for(let t=0;t<85;t++){

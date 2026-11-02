@@ -4,7 +4,8 @@
 
   const P = window.AutoPilotProtocol;
   const A = window.AutoPilotAudit;
-  if (!P) throw new Error('AutoPilot protocol.js 누락');
+  const C = window.AutoPilotComposer;
+  if (!P || !C) throw new Error('AutoPilot protocol.js 또는 composer-ui.js 누락');
   const STORAGE_KEY = 'autopilotCheckpoint';
   const LOG_LIMIT = 80;
   const MAX_RETRIES = 3;
@@ -79,13 +80,7 @@
     return null;
   };
 
-  const composer = () => firstVisible([
-    '#prompt-textarea',
-    '[data-testid="prompt-textarea"]',
-    '[contenteditable="true"][data-lexical-editor="true"]',
-    'form[data-chatgpt-composer] [contenteditable="true"]',
-    'textarea#prompt-textarea'
-  ]);
+  const composer=()=>C.findEditor(document);
   const stopButton = () => firstVisible([
     'button[data-testid="stop-button"]',
     'button[data-testid*="stop"]',
@@ -95,18 +90,9 @@
     'button[aria-label*="Stop"]',
     'button[aria-label*="중지"]'
   ]);
-  const sendButton = () => firstVisible([
-    'button[data-testid="send-button"]',
-    'button[data-testid*="send-button"]',
-    '#composer-submit-button',
-    'button[aria-label="Send prompt"]',
-    'button[aria-label="Send message"]',
-    'button[aria-label="Send"]',
-    'button[aria-label="프롬프트 보내기"]',
-    'button[aria-label="메시지 보내기"]'
-  ]);
+  const sendButton=()=>C.findSend(document,composer());
   const isBusy = () => Boolean(stopButton());
-  const enabled = (btn) => btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true';
+  const enabled = (btn) => C.enabled(btn);
   const root = () => document.querySelector('main') || document.body;
   const visibleText = (node) => typeof node?.innerText === 'string' ? node.innerText : (node?.textContent || '');
 
@@ -139,28 +125,8 @@
     return P.readReplyFromDom(root(), state.runId, state.lastTurn, state.mode);
   }
 
-  function fillComposer(el, message) {
-    el.focus();
-    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
-      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, message);
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: message }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return;
-    }
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    document.execCommand('delete', false, null);
-    const inserted = document.execCommand('insertText', false, message);
-    if (!inserted || !(el.textContent || '').trim()) {
-      el.textContent = message;
-      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: message }));
-    }
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: message }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+  function fillComposer(el,message) {
+    C.fill(el,message,document);
   }
 
   async function waitFor(check, timeoutMs) {
@@ -195,9 +161,8 @@
         if (el) {
           fillComposer(el, outgoing);
           await sleep(350);
-          const typed = String(el.value ?? el.innerText ?? el.textContent ?? '');
-          if (P.normalize(typed).includes(P.normalize(outgoing))) {
-            btn = await waitFor(() => enabled(sendButton()) ? sendButton() : null, 2500);
+          if (C.containsPrompt(composer(),outgoing)) {
+            btn = await waitFor(() => enabled(sendButton()) ? sendButton() : null, 3500);
             if (btn) break;
           }
         }
@@ -205,7 +170,13 @@
         await sleep(700 * (attempt + 1));
       }
       if (!state.running) return;
-      if (!btn) return stop('프롬프트 입력·전송 UI를 확인할 수 없습니다. 중복 전송하지 않습니다.', 'error');
+      if (!btn) {
+        const diag=C.diagnosis(document);
+        const reason=!diag.editorFound?'입력창 없음':
+          !C.containsPrompt(composer(),outgoing)?'프롬프트 내용 확인 실패':
+          !diag.sendFound?'전송 버튼 없음':'전송 버튼 비활성';
+        return stop('프롬프트 입력 UI 확인 실패 ('+reason+'). 중복 전송하지 않습니다.', 'error');
+      }
 
       state.phase = 'sending';
       await persist('전송 직전 체크포인트 저장');

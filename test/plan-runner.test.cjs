@@ -4,13 +4,14 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const D=require('../src/planning.js');
+const C_SOURCE=fs.readFileSync(require.resolve('../src/composer-ui.js'),'utf8');
 
 test('Plan Mode는 질문→계획 응답을 저장하지만 개발 루프를 실행하지 않는다', {timeout:20000}, async()=>{
   let transcript='',listener;
   const values={autopilotRunning:false};
   let sent=[];
   class Textarea {
-    constructor(){this._value='';}
+    constructor(){this._value='';this.tagName='TEXTAREA';}
     get value(){return this._value;}
     set value(x){this._value=x;}
     getClientRects(){return [1];}
@@ -42,10 +43,11 @@ test('Plan Mode는 질문→계획 응답을 저장하지만 개발 루프를 �
     crypto:{randomUUID:()=>String(sent.length+1)},
     HTMLTextAreaElement:Textarea,
     HTMLInputElement:class{},
-    InputEvent:class {},
+    InputEvent:class {},Event:class {},
     setTimeout,
     console
   };
+  vm.runInNewContext(C_SOURCE,context);
   vm.runInNewContext(fs.readFileSync(require.resolve('../src/plan-runner.js'),'utf8'),context);
   async function waitFor(phase){
     for(let i=0;i<100;i++){
@@ -79,6 +81,7 @@ test('AutoPilot 실행 중에는 설계 요청을 보내지 않는다', {timeout
     crypto:{randomUUID:()=> 'id'},
     setTimeout,console
   };
+  vm.runInNewContext(C_SOURCE,context);
   vm.runInNewContext(fs.readFileSync(require.resolve('../src/plan-runner.js'),'utf8'),context);
   listener({action:'planAnalyze',scope:'/shared/PerpDEX'},null,()=>{});
   await new Promise(r=>setTimeout(r,100));
@@ -90,7 +93,7 @@ test('프로젝트 검색은 실제 형식 응답만 저장하고 Plan Mode 상�
   let listener,transcript='',sent=0;
   const values={autopilotRunning:false,autopilotPlanPhase:'review',autopilotPlanResult:{title:'기존 승인 계획'}};
   class Textarea {
-    constructor(){this._value='';}
+    constructor(){this._value='';this.tagName='TEXTAREA';}
     get value(){return this._value;}
     set value(v){this._value=v;}
     getClientRects(){return [1];}
@@ -123,8 +126,9 @@ test('프로젝트 검색은 실제 형식 응답만 저장하고 Plan Mode 상�
     }},runtime:{onMessage:{addListener(f){listener=f;}}}},
     crypto:{randomUUID:()=>String(sent+1)},
     HTMLTextAreaElement:Textarea,HTMLInputElement:class{},
-    InputEvent:class{},setTimeout,console
+    InputEvent:class{},Event:class{},setTimeout,console
   };
+  vm.runInNewContext(C_SOURCE,context);
   vm.runInNewContext(fs.readFileSync(require.resolve('../src/plan-runner.js'),'utf8'),context);
   listener({action:'planDiscover'},null,()=>{});
   listener({action:'planDiscover'},null,()=>{});

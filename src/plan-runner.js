@@ -4,7 +4,8 @@
   window.__autopilotPlanRunnerLoaded = true;
   const D = window.AutoPilotPlanning;
   const A = window.AutoPilotAudit;
-  if (!D) throw Error('planning.js 누락');
+  const C = window.AutoPilotComposer;
+  if (!D || !C) throw Error('planning.js 또는 composer-ui.js 누락');
 
   let active = false;
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -18,38 +19,9 @@
         ...(scope ? {autopilotPlanScope:scope} : {})});
     }
   };
-  const firstVisible = selectors => {
-    for (const selector of selectors) {
-      const el=document.querySelector(selector);
-      if (el && el.getClientRects().length) return el;
-    }
-    return null;
-  };
-  function editor() {
-    return firstVisible(['#prompt-textarea','[data-testid="prompt-textarea"]',
-      '[contenteditable="true"][data-lexical-editor="true"]', 'textarea#prompt-textarea']);
-  }
-  function sendButton() {
-    return firstVisible(['button[data-testid="send-button"]','#composer-submit-button',
-      'button[aria-label="Send prompt"]','button[aria-label="메시지 보내기"]']);
-  }
-  function fill(el, message) {
-    el.focus();
-    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
-      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto,'value')?.set?.call(el,message);
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:message}));
-    } else {
-      const selection=window.getSelection();
-      const range=document.createRange();
-      range.selectNodeContents(el);
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.execCommand('delete',false,null);
-      if (!document.execCommand('insertText',false,message)) el.textContent=message;
-      el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:message}));
-    }
-  }
+  const editor=()=>C.findEditor(document);
+  const sendButton=(el)=>C.findSend(document,el);
+
   function responseAfter(id) {
     const main=document.querySelector('main') || document.body;
     const messages=Array.from(main.querySelectorAll('[data-message-author-role]'));
@@ -100,19 +72,36 @@
     await status(phase,kind==='discover'?'MCP에서 프로젝트를 검색 중입니다.':'설계 '+(kind==='questions'?'질문 생성':'계획 작성')+' 진행 중',scope,kind);
     try {
       let button=null;
-      for (let i=0;i<3;i++) {
+      let inputObserved=false;
+      for (let i=0;i<4;i++) {
         const el=editor();
         if (el) {
-          fill(el,text);
+          // UI가 텍스트 입력 후 리렌더링될 수 있으므로 새 에디터를 다시 조회한다.
+          if(!C.containsPrompt(el,text)) C.fill(el,text,document);
           await pause(350);
-          if ((el.value ?? el.innerText ?? el.textContent ?? '').includes(text)) {
-            button=sendButton();
-            if (button && !button.disabled) break;
+          const current=editor();
+          if (C.containsPrompt(current,text)) {
+            inputObserved=true;
+            // 최신 UI는 전송 버튼을 텍스트 입력 뒤에 비동기로 생성한다.
+            for (let tick=0;tick<12;tick++) {
+              const candidate=sendButton(current);
+              if (C.enabled(candidate)) {button=candidate;break;}
+              if (isBusy()) break;
+              await pause(250);
+            }
+            if(button)break;
           }
         }
-        await pause(700);
+        await pause(450);
       }
-      if (!button || isBusy()) throw Error('ChatGPT 메시지 입력·전송 버튼을 확인할 수 없습니다.');
+      if (!button || isBusy()) {
+        const d=C.diagnosis(document);
+        const reason=!d.editorFound?'입력창 없음':
+          !inputObserved?'프롬프트 입력 결과 확인 실패':
+          !d.sendFound?'전송 버튼 없음':'전송 버튼 비활성';
+        // 원문 프롬프트나 채팅 내용을 로깅하지 않는다.
+        throw Error('ChatGPT 입력 UI 확인 실패 ('+reason+', '+d.editorKind+'). 새로고침 후 재시도하거나 확장프로그램 로그를 확인하세요.');
+      }
       await status(phase,'요청 전송 직전. 중복 전송은 금지됩니다.',scope,kind);
       button.click();
       await status(phase,'AI 응답을 확인 중',scope,kind);

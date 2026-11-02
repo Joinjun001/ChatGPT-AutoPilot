@@ -45,3 +45,9 @@ AI가 생성한 프롬프트와 웹 문서는 도구 권한을 바꿀 수 없습
 - src/planning.js: 읽기 전용 MCP 목록 검색 프롬프트와 검색 결과 JSON 계약. 검증된 /shared/ 경로만 허용.
 - src/plan-runner.js: 검색 응답을 일반 Plan Mode와 독립된 브라우저 저장소 키에 기록하며 중복 전송을 방지.
 - src/plan-panel.js: MCP에서 프로젝트 찾기와 검색 결과 병합. 검색은 사용자 클릭으로만 시작하며 실제 MCP 도구 호출은 ChatGPT가 수행.
+
+## v0.6.3 공통 ChatGPT 입력 어댑터
+
+- src/composer-ui.js: textarea, ProseMirror 역할 텍스트박스, 입력창 폼에 속한 전송 버튼의 탐지·입력·유효성 검증.
+- src/plan-runner.js 및 src/content.js에서 동일한 어댑터 재사용. 각 전송 전에 전체 프롬프트와 버튼 활성 상태 확인.
+- DOM 변형으로 전송 불가 시 원인 분류 오류를 남기며, 중복 전송 가능성이 있는 자동 재클릭이나 무차별 전송 버튼 탐색은 사용하지 않음.
