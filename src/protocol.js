@@ -5,9 +5,9 @@
   const BEGIN = 'AUTOPILOT_NEXT_PROMPT_START';
   const END = 'AUTOPILOT_NEXT_PROMPT_END';
   const MAX_PROMPT = 8000;
-  // ChatGPT 대화 영역(main.innerText)의 UI footer가 실제 AI 응답 뒤에 붙는 경우가 있다.
-  // 이 알려진 문자열만 말미에서 제거하고, 임의의 후행 문장은 절대로 허용하지 않는다.
-  const CHATGPT_FOOTER_RE = /\s+ChatGPT can make mistakes\.\s*Check important info\.(?:\s+Latest response(?:\s+Thinking effort\s+(?:Instant|Medium|High|Extra High))?)?\s*$/i;
+  // 마지막 Assistant 메시지 DOM이 없는 경우에만 전체 대화 텍스트를 검사한다.
+  // 알려진 ChatGPT UI footer만 제거하며, 임의 문장이 뒤따르면 반드시 거부한다.
+  const CHATGPT_FOOTER_RE = /(?:\s+Like this personality\?)?\s+ChatGPT can make mistakes\.\s*Check important info\.(?:\s+Latest response(?:\s+Thinking effort)?(?:\s+(?:Instant|Medium|High|Extra High))?)?\s*$/i;
 
   function stripChatGPTFooter(value) {
     return String(value || '').trim().replace(CHATGPT_FOOTER_RE, '').trimEnd();
@@ -79,7 +79,59 @@
     return { found: true, text: candidate, fullAnchor: false, partialAnchor: true };
   }
 
-  const api = { parseResponse, composePrompt, readReply, normalize, BEGIN, END, MAX_PROMPT };
+
+  function textOf(node) {
+    return typeof node?.innerText === 'string' ? node.innerText : (node?.textContent || '');
+  }
+
+  function readAssistantBody(node) {
+    // 액션 버튼/대화 footer를 피하기 위해 메시지의 Markdown 본문을 우선한다.
+    const blocks = typeof node.querySelectorAll === 'function'
+      ? Array.from(node.querySelectorAll('.markdown'))
+      : [];
+    return blocks.length ? blocks.map(textOf).join('\n') : textOf(node);
+  }
+
+  /**
+   * 회차별 user 앵커 뒤의 Assistant 메시지들만 읽는다.
+   * 이후에 다른 사용자 메시지가 있으면 이전 응답을 잘못 재사용하지 않는다.
+   * DOM role 식별자가 없는 ChatGPT UI에서는 기존 엄격한 텍스트 파서로 복귀한다.
+   */
+  function readReplyFromDom(container, runId, turn, mode = 'dynamic') {
+    if (typeof container?.querySelectorAll === 'function') {
+      const messages = Array.from(container.querySelectorAll('[data-message-author-role]'));
+      const id = '[AUTOPILOT_MESSAGE_ID:' + runId + ':' + turn + ']';
+      const endMarker = id + ':END';
+      let anchor = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].getAttribute?.('data-message-author-role') !== 'user') continue;
+        const body = textOf(messages[i]);
+        if (body.includes(endMarker) || body.includes(id)) {
+          anchor = i;
+          break;
+        }
+      }
+      if (anchor >= 0) {
+        const later = messages.slice(anchor + 1);
+        if (later.some(message => message.getAttribute?.('data-message-author-role') === 'user')) {
+          return { found: false, text: '', fullAnchor: false };
+        }
+        const replies = later
+          .filter(message => message.getAttribute?.('data-message-author-role') === 'assistant')
+          .map(readAssistantBody).filter(body => body.trim());
+        if (!replies.length) return { found: false, text: '', fullAnchor: false };
+        return {
+          found: true,
+          text: replies.join('\n').trim(),
+          fullAnchor: textOf(messages[anchor]).includes(endMarker),
+          source: 'assistant-dom'
+        };
+      }
+    }
+    return readReply(textOf(container), runId, turn, mode);
+  }
+
+  const api = { parseResponse, composePrompt, readReply, readReplyFromDom, normalize, BEGIN, END, MAX_PROMPT };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.AutoPilotProtocol = api;
 })(typeof window !== 'undefined' ? window : null);

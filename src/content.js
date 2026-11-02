@@ -130,7 +130,7 @@
 
   function readCurrent() {
     scrollToLatest();
-    return P.readReply(visibleText(root()), state.runId, state.lastTurn, state.mode);
+    return P.readReplyFromDom(root(), state.runId, state.lastTurn, state.mode);
   }
 
   function fillComposer(el, message) {
