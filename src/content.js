@@ -3,6 +3,7 @@
   window.__autopilotLoaded = true;
 
   const P = window.AutoPilotProtocol;
+  const A = window.AutoPilotAudit;
   if (!P) throw new Error('AutoPilot protocol.js 누락');
   const STORAGE_KEY = 'autopilotCheckpoint';
   const LOG_LIMIT = 80;
@@ -36,10 +37,14 @@
   const pageUrl = () => location.origin + location.pathname;
   const shorten = (value, n = 90) => String(value || '').replace(/\s+/g, ' ').trim().slice(-n);
 
+  const audit = (event) => A?.record(chrome, {runId:state.runId,scope:state.scope,turn:state.lastTurn,...event})
+    .catch(()=>undefined);
+
   async function persist(message, phase = state.running ? 'running' : 'stopped') {
     log.push({ t: Date.now(), m: message });
     if (log.length > LOG_LIMIT) log = log.slice(-LOG_LIMIT);
     console.info('[AutoPilot]', message);
+    void audit({event:'state',phase:state.phase,status:phase});
     const canResume = state.phase !== 'finished' && (state.sent < state.limit || state.phase === 'waiting') && !!state.runId && !!state.prompt;
     try {
       await chrome.storage.local.set({
@@ -60,6 +65,7 @@
   }
 
   async function stop(reason, phase = 'stopped') {
+    void audit({event:'run_end',phase:state.phase,status:phase,reason:phase==='blocked'?'blocked':phase==='done'?'done':phase==='error'?'error':'stopped'});
     state.running = false;
     if (phase === 'done') state.phase = 'finished';
     await persist('중지: ' + reason, phase);
@@ -207,6 +213,7 @@
       btn.click();
       state.sent = turn;
       state.lastTurn = turn;
+      void audit({event:'turn_sent',phase:'waiting',turn,limit:state.limit,mode:state.mode});
       state.lastClickAt = Date.now();
       state.phase = 'waiting';
       seenBusy = isBusy();
@@ -275,6 +282,7 @@
       }
 
       state.lastHandledTurn = state.lastTurn;
+      void audit({event:'turn_result',turn:state.lastTurn,status:parsed.status,nextPromptLength:parsed.nextPrompt?.length || 0});
       if (parsed.status === 'DONE') return stop('AI가 모든 TASK 완료를 보고했습니다.', 'done');
       if (parsed.status === 'BLOCKED') return stop('AI가 승인·권한 또는 필수 입력 대기를 보고했습니다.', 'blocked');
       if (state.sent >= state.limit) return stop('최대 전송 횟수 ' + state.limit + '회를 완료했습니다.');
@@ -342,6 +350,7 @@
       repeatCount: 0, lastClickAt: 0
     };
     log = [];
+    void audit({event:'run_start',mode:state.mode,limit:state.limit,phase:'ready'});
     lastBusy = isBusy();
     seenBusy = lastBusy;
     void persist('새 실행 시작: ' + state.mode + ' 모드');
@@ -366,6 +375,7 @@
     if (stored.mode === 'dynamic' && !stored.scope) return '고정 작업 범위가 없어 재개할 수 없습니다.';
     if (stored.phase === 'sending') return '전송 클릭 여부가 불확실하여 중복 실행 방지를 위해 재개할 수 없습니다.';
     state = { ...stored, running: true };
+    void audit({event:'run_resume',phase:state.phase,limit:state.limit});
     await persist('체크포인트 재개: ' + state.sent + '/' + state.limit);
     lastBusy = isBusy();
     seenBusy = lastBusy;

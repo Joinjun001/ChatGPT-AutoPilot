@@ -195,6 +195,16 @@
     <ul id="log"><li class="empty">아직 기록이 없습니다</li></ul>
   </section>
 
+  <section class="card">
+    <div class="row">
+      <strong>실행 추적 기록</strong>
+      <button id="audit-export" type="button">JSONL 내보내기</button>
+    </div>
+    <p class="hint">최근 1,000개 이벤트를 보관합니다. 도구 원문이나 자격증명은 포함하지 않습니다.</p>
+    <div id="audit-preview" class="hint" style="white-space:pre-wrap;max-height:180px;overflow-y:auto">아직 기록이 없습니다.</div>
+  </section>
+
+  <script src="src/audit.js"></script>
   <script src="src/defaults.js"></script>
   <script src="src/planning.js"></script>
   <script src="src/sidepanel.js"></script>

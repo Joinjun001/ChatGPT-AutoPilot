@@ -198,3 +198,27 @@ els.resume.addEventListener('click', () => void act('resume'));
 
 void loadSettings();
 void refreshStatus();
+
+// ---------- 구조화 이벤트 로그 내보내기 ----------
+async function refreshAudit() {
+  const {autopilotAuditEvents=[]} = await chrome.storage.local.get(['autopilotAuditEvents']);
+  const view=document.querySelector('#audit-preview');
+  if (!view) return;
+  const last=autopilotAuditEvents.slice(-8).reverse();
+  view.textContent=last.map(x=>x.time+' · '+x.event+' · '+(x.turn ?? '-')+'회차 · '+(x.status || x.phase || '')).join('\n') || '아직 기록이 없습니다.';
+}
+document.querySelector('#audit-export')?.addEventListener('click',async()=>{
+  const {autopilotAuditEvents=[]}=await chrome.storage.local.get(['autopilotAuditEvents']);
+  if (!autopilotAuditEvents.length) return showLocalError('내보낼 실행 추적 기록이 없습니다.');
+  const blob=new Blob([AutoPilotAudit.toJsonl(autopilotAuditEvents)],{type:'application/x-ndjson'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download='autopilot-audit-'+new Date().toISOString().slice(0,10)+'.jsonl';
+  document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+chrome.storage.onChanged.addListener((changes,area)=>{
+  if(area==='local' && 'autopilotAuditEvents' in changes) void refreshAudit();
+});
+void refreshAudit();

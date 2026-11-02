@@ -3,12 +3,14 @@
   if (window.__autopilotPlanRunnerLoaded) return;
   window.__autopilotPlanRunnerLoaded = true;
   const D = window.AutoPilotPlanning;
+  const A = window.AutoPilotAudit;
   if (!D) throw Error('planning.js 누락');
 
   let active = false;
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const isBusy = () => Boolean(document.querySelector('button[data-testid="stop-button"], button[aria-label="Stop generating"]'));
   const status = async (phase, message, scope) => {
+    void A?.record(chrome,{event:'plan_state',scope,phase,status:phase}).catch(()=>undefined);
     await chrome.storage.local.set({autopilotPlanPhase:phase, autopilotPlanStatus:message,
       ...(scope ? {autopilotPlanScope:scope} : {})});
   };
@@ -88,6 +90,7 @@
       return '다른 응답 또는 AutoPilot이 실행 중입니다.';
     }
     const id='[AUTOPILOT_PLAN_ID:'+crypto.randomUUID()+']';
+    void A?.record(chrome,{event:'plan_start',scope,planId:id}).catch(()=>undefined);
     const text=id+'\n'+prompt+'\n'+id+':END';
     const phase=kind==='questions'?'analyzing':'finalizing';
     await status(phase,'설계 '+(kind==='questions'?'질문 생성':'계획 작성')+' 진행 중',scope);
@@ -121,6 +124,7 @@
             ? {autopilotPlanQuestions:out.value,autopilotPlanResult:null}
             : {autopilotPlanResult:out.value};
           await chrome.storage.local.set({...values,autopilotPlanScope:scope});
+          void A?.record(chrome,{event:'plan_result',scope,planId:id,status:kind}).catch(()=>undefined);
           await status(kind==='questions'?'questions':'review','AI 응답을 확인했습니다. 사용자 선택을 기다립니다.',scope);
           return '계획 응답 완료';
         }

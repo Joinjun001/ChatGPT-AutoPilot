@@ -1,0 +1,291 @@
+diff --git a/src/audit.ts b/src/audit.ts
+new file mode 100644
+index 0000000..c4d826f
+--- /dev/null
++++ b/src/audit.ts
+@@ -0,0 +1,84 @@
++/* 원격 MCP 요청 감사 로그. 인자/콘텐츠/인증값 원문은 저장하지 않는다. */
++import { AsyncLocalStorage } from "node:async_hooks";
++import { createHash } from "node:crypto";
++import { mkdir, open, readdir, rename, stat, unlink } from "node:fs/promises";
++import path from "node:path";
++
++export interface AuditContext {
++  requestId: string;
++  rpcMethod?: string;
++  toolName?: string;
++  runId?: string;
++  turn?: number;
++  argKeys?: string[];
++  commandHash?: string;
++  cwd?: string;
++}
++export const auditContext = new AsyncLocalStorage<AuditContext>();
++const MAX_FILE = 2 * 1024 * 1024;
++const MAX_ARCHIVES = 5;
++let writeChain: Promise<void> = Promise.resolve();
++
++const ascii = (x: unknown, max=128) => typeof x === "string" ? x.slice(0,max).replace(/[\r\n\x00-\x1f]/g, "") : undefined;
++function runIdFromArgs(args: unknown): {runId?:string;turn?:number} {
++  if (!args || typeof args !== "object" || Array.isArray(args)) return {};
++  const raw = args as Record<string,unknown>;
++  // 명령 본문·스크립트·stdin·파일 내용은 절대로 영속화하지 않는다.
++  const env = raw.env && typeof raw.env === "object" && !Array.isArray(raw.env) ? raw.env as Record<string,unknown> : {};
++  const id = env.AUTOPILOT_RUN_ID;
++  const turn = Number(env.AUTOPILOT_TURN);
++  return {
++    runId: typeof id === "string" && /^[a-zA-Z0-9-]{8,80}$/.test(id) ? id : undefined,
++    turn: Number.isInteger(turn) && turn >= 1 && turn <= 100000 ? turn : undefined,
++  };
++}
++export function toolMetadata(method: unknown, name: unknown, args: unknown): Partial<AuditContext> {
++  const x = args && typeof args === "object" && !Array.isArray(args) ? args as Record<string,unknown> : {};
++  const cmd = typeof x.cmd === "string" ? x.cmd : typeof x.script === "string" ? x.script : undefined;
++  const cwd = ascii(x.workdir ?? x.cwd, 200);
++  const match = cwd?.match(/^\/shared\/([a-zA-Z0-9가-힣_.-]+)(?:\/|$)/);
++  return {
++    rpcMethod: ascii(method, 80), toolName: ascii(name, 100),
++    argKeys: Object.keys(x).filter(k => k !== "__proto__").sort().slice(0,40).map(k=>ascii(k,70) || ""),
++    commandHash: cmd ? createHash("sha256").update(cmd).digest("hex").slice(0,16) : undefined,
++    cwd: cwd === "/shared" ? "/shared" : (match ? "/shared/" + match[1] : undefined),
++    ...runIdFromArgs(x),
++  };
++}
++export function resultMetadata(value: Record<string,unknown>, isError: boolean): Record<string,unknown> {
++  const exitCode = typeof value.exitCode === "number" ? value.exitCode : typeof value.code === "number" ? value.code : undefined;
++  const error = value.error;
++  const stderr = typeof value.stderr === "string" ? value.stderr : undefined;
++  return {
++    toolError: isError || (exitCode !== undefined && exitCode !== 0) || value.timedOut === true,
++    exitCode, timedOut: value.timedOut === true, running: value.running === true,
++    sessionId: typeof value.sessionId === "string" ? ascii(value.sessionId,80) : undefined,
++    errorCategory: typeof error === "string" ? (
++      /EACCES|EPERM|permission/i.test(error) ? "permission" :
++      /ENOENT|not found/i.test(error) ? "not_found" :
++      /timeout/i.test(error) ? "timeout" : "tool_error"
++    ) : undefined,
++    stderrBytes: stderr ? Buffer.byteLength(stderr) : undefined,
++  };
++}
++export function recordAudit(dir: string, event: Record<string,unknown>): Promise<void> {
++  // 직렬 append + 크기 단위 로테이션. 감사 실패는 실제 도구 실행을 막지 않는다.
++  const next = writeChain.catch(()=>undefined).then(async () => {
++    await mkdir(dir,{recursive:true,mode:0o700});
++    const file=path.join(dir,"events.jsonl");
++    const line=JSON.stringify({timestamp:new Date().toISOString(), ...event})+"\n";
++    try {
++      const info=await stat(file);
++      if(info.size + Buffer.byteLength(line) > MAX_FILE){
++        const archive=path.join(dir,"events-"+Date.now()+"-"+Math.random().toString(36).slice(2,8)+".jsonl");
++        await rename(file,archive);
++        const names=(await readdir(dir)).filter(n=>/^events-\d+-[\da-z]+\.jsonl$/.test(n)).sort().reverse();
++        await Promise.all(names.slice(MAX_ARCHIVES).map(n=>unlink(path.join(dir,n))));
++      }
++    }catch(err){if((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;}
++    const handle=await open(file,"a",0o600);
++    try{await handle.appendFile(line,"utf8");}finally{await handle.close();}
++  }).catch((err)=>{console.error("MCP audit write failed:",err instanceof Error?err.message:"unknown error");});
++  writeChain=next;
++  return next;
++}
+diff --git a/src/http-server.ts b/src/http-server.ts
+index f5e9418..44511c0 100644
+--- a/src/http-server.ts
++++ b/src/http-server.ts
+@@ -10,6 +10,7 @@ import {
+ import express, { type Request, type Response } from "express";
+ 
+ import { createBearerAuth, createHostValidation } from "./auth.js";
++import { auditContext, recordAudit, toolMetadata } from "./audit.js";
+ import type { AppConfig } from "./config.js";
+ import { errorMessage } from "./errors.js";
+ import { createMcpServer, type McpServices } from "./mcp-server.js";
+@@ -75,8 +76,7 @@ export async function startHttpServer(
+         return;
+       }
+       logged = true;
+-      console.log(
+-        JSON.stringify({
++      const record = {
+           event: "mcp_request",
+           requestId,
+           httpMethod: request.method,
+@@ -85,8 +85,9 @@ export async function startHttpServer(
+           status: response.statusCode,
+           outcome,
+           durationMs: Math.round((performance.now() - startedAt) * 10) / 10,
+-        }),
+-      );
++        };
++      console.log(JSON.stringify(record));
++      void recordAudit(process.env.MCP_AUDIT_DIR || "/shared/autopilot-logs/mcp", record);
+     };
+     response.once("finish", () => logCompletion("completed"));
+     response.once("close", () => {
+@@ -94,7 +95,7 @@ export async function startHttpServer(
+         logCompletion("aborted");
+       }
+     });
+-    next();
++    auditContext.run({requestId}, next);
+   });
+   app.use(createHostValidation(config));
+ 
+@@ -154,6 +155,9 @@ export async function startHttpServer(
+   });
+ 
+   const postHandler = async (request: Request, response: Response): Promise<void> => {
++    const context = auditContext.getStore();
++    if (context) Object.assign(context, toolMetadata(rpcMethod(request.body),rpcToolName(request.body),
++      (request.body as {params?:{arguments?:unknown}})?.params?.arguments));
+     const transport = new StreamableHTTPServerTransport({
+       sessionIdGenerator: undefined,
+       enableJsonResponse: true,
+diff --git a/src/tool-result.ts b/src/tool-result.ts
+index 1705ee4..f1ad061 100644
+--- a/src/tool-result.ts
++++ b/src/tool-result.ts
+@@ -1,6 +1,7 @@
+ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+ 
+ import { errorMessage } from "./errors.js";
++import { auditContext, recordAudit, resultMetadata } from "./audit.js";
+ 
+ export function successResult(data: Record<string, unknown>): CallToolResult {
+   return {
+@@ -21,9 +22,21 @@ export function errorResult(error: unknown): CallToolResult {
+ export async function runTool(
+   operation: () => Promise<Record<string, unknown>> | Record<string, unknown>,
+ ): Promise<CallToolResult> {
++  const startedAt = performance.now();
++  let result: CallToolResult;
+   try {
+-    return successResult(await operation());
++    result = successResult(await operation());
+   } catch (error) {
+-    return errorResult(error);
++    result = errorResult(error);
+   }
++  const context = auditContext.getStore();
++  if (context) {
++    const data = result.structuredContent as Record<string,unknown> || {};
++    void recordAudit(process.env.MCP_AUDIT_DIR || "/shared/autopilot-logs/mcp", {
++      event:"tool_result", ...context,
++      durationMs:Math.round((performance.now()-startedAt)*10)/10,
++      ...resultMetadata(data, result.isError === true),
++    });
++  }
++  return result;
+ }
+diff --git a/test/audit.test.ts b/test/audit.test.ts
+new file mode 100644
+index 0000000..594352b
+--- /dev/null
++++ b/test/audit.test.ts
+@@ -0,0 +1,106 @@
++import { mkdtemp, readFile, rm, writeFile, readdir } from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
++import { afterEach, describe, expect, it } from "vitest";
++import { auditContext, recordAudit, resultMetadata, toolMetadata } from "../src/audit.js";
++import { runTool } from "../src/tool-result.js";
++import { loadConfig } from "../src/config.js";
++import { startHttpServer } from "../src/http-server.js";
++import { createServices } from "../src/mcp-server.js";
++
++describe("MCP JSONL 감사 로그",()=>{
++  const dirs:string[]=[];
++  afterEach(async()=>{for(const dir of dirs.splice(0)) await rm(dir,{recursive:true,force:true});});
++  it("스크립트·비밀값을 남기지 않고 명령 해시, 종료코드와 실행 ID만 기록한다",async()=>{
++    const dir=await mkdtemp(path.join(os.tmpdir(),"mcp-audit-"));dirs.push(dir);
++    const cwd=dir;
++    const before=process.env.MCP_AUDIT_DIR;
++    process.env.MCP_AUDIT_DIR=dir;
++    try{
++      const args={cmd:"echo api_key=SUPER_SECRET",env:{AUTOPILOT_RUN_ID:"run-12345678",AUTOPILOT_TURN:"18",PASSWORD:"SECRET"},workdir:cwd};
++      const meta=toolMetadata("tools/call","exec_command",args);
++      expect(meta.runId).toBe("run-12345678");
++      expect(meta.commandHash).toHaveLength(16);
++      await auditContext.run({requestId:"test-request-id",...meta},async()=>{
++        await runTool(async()=>({exitCode:7,stdout:"hello",stderr:"api_key=SUPER_SECRET",timedOut:false}));
++      });
++      let content="";
++      for(let i=0;i<30;i++){
++        content=await readFile(path.join(dir,"events.jsonl"),"utf8").catch(()=>"");
++        if(content.includes('"event":"tool_result"'))break;
++        await new Promise(resolve=>setTimeout(resolve,20));
++      }
++      const row=JSON.parse(content.trim());
++      expect(row.toolName).toBe("exec_command");
++      expect(row.exitCode).toBe(7);
++      expect(row.toolError).toBe(true);
++      expect(row.runId).toBe("run-12345678");
++      expect(row.turn).toBe(18);
++      expect(content).not.toContain("SUPER_SECRET");
++      expect(content).not.toContain("PASSWORD");
++      expect(content).not.toContain("echo api_key");
++      expect(row.stderrBytes).toBeGreaterThan(0);
++    }finally{
++      if(before===undefined) delete process.env.MCP_AUDIT_DIR;
++      else process.env.MCP_AUDIT_DIR=before;
++    }
++  });
++  it("2 MiB를 넘으면 파일을 회전시키고 기존 로그를 유지한다",async()=>{
++    const dir=await mkdtemp(path.join(os.tmpdir(),"mcp-rotate-"));dirs.push(dir);
++    await writeFile(path.join(dir,"events.jsonl"),"x".repeat(2*1024*1024));
++    await recordAudit(dir,{event:"test_rotate",requestId:"r1"});
++    const files=await readdir(dir);
++    expect(files.some(x=>/^events-\d+/.test(x))).toBe(true);
++    expect((await readFile(path.join(dir,"events.jsonl"),"utf8"))).toContain("test_rotate");
++  });
++  it("메타데이터 분류는 도구 오류와 HTTP 오류를 구분한다",()=>{
++    expect(resultMetadata({code:0,timedOut:false},false).toolError).toBe(false);
++    expect(resultMetadata({error:"EACCES on file"},true).errorCategory).toBe("permission");
++    expect(toolMetadata("tools/call","write_file",{content:"secret",path:"/tmp/x"}).argKeys).toContain("content");
++  });
++  it("실제 HTTP MCP 요청도 요청 로그와 도구 결과 로그를 남긴다",async()=>{
++    const dir=await mkdtemp(path.join(os.tmpdir(),"mcp-audit-http-"));dirs.push(dir);
++    const previous=process.env.MCP_AUDIT_DIR;process.env.MCP_AUDIT_DIR=dir;
++    const cfg=loadConfig({MCP_AUTH_TOKEN:"test-token",MCP_HOST:"127.0.0.1",MCP_DEFAULT_CWD:dir},dir);
++    cfg.port=0;
++    const server=await startHttpServer(cfg,createServices(cfg));
++    try{
++      const address=server.httpServer.address();
++      if(!address || typeof address==="string")throw Error("missing address");
++      const endpoint="http://127.0.0.1:"+address.port+cfg.endpoint;
++      const post=async(body:unknown)=>fetch(endpoint,{
++        method:"POST",
++        headers:{authorization:"Bearer test-token",accept:"application/json, text/event-stream","content-type":"application/json"},
++        body:JSON.stringify(body)
++      });
++      const response=await post({jsonrpc:"2.0",id:5,method:"tools/call",params:{
++        name:"exec_command",arguments:{
++          cmd:"exit 9",
++          workdir:dir,
++          env:{AUTOPILOT_RUN_ID:"run-76543210",AUTOPILOT_TURN:"3"},
++          yieldTimeMs:3000
++        }
++      }});
++      expect(response.status).toBe(200);
++      await response.text();
++      for(let i=0;i<60;i++){
++        const data=await readFile(path.join(dir,"events.jsonl"),"utf8").catch(()=>"");
++        if(data.includes('"event":"tool_result"') && data.includes('"event":"mcp_request"'))break;
++        await new Promise(resolve=>setTimeout(resolve,50));
++      }
++      const data=await readFile(path.join(dir,"events.jsonl"),"utf8");
++      const rows=data.trim().split("\n").map(x=>JSON.parse(x));
++      const tool=rows.find(x=>x.event==="tool_result");
++      const req=rows.find(x=>x.event==="mcp_request");
++      expect(tool.toolName).toBe("exec_command");
++      expect(tool.exitCode).toBe(9);
++      expect(tool.runId).toBe("run-76543210");
++      expect(req.requestId).toBe(tool.requestId);
++      expect(req.status).toBe(200);
++    }finally{
++      await server.close();
++      if(previous===undefined)delete process.env.MCP_AUDIT_DIR;
++      else process.env.MCP_AUDIT_DIR=previous;
++    }
++  });
++});

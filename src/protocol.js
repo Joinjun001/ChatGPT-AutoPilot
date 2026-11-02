@@ -48,6 +48,10 @@
     const fixed = String(guardrails || '').trim();
     const parts = [id, String(task || '').trim()];
     if (scope) parts.push('[고정 작업 범위]\n' + scope);
+    parts.push('[진단 로그 연결]\n실행 ID: ' + runId + ', 회차: ' + turn +
+      '. MCP exec_command/run_script가 env를 지원하면 기존 환경변수 설정을 유지하면서 ' +
+      'AUTOPILOT_RUN_ID=' + runId + ', AUTOPILOT_TURN=' + turn +
+      ' 값을 함께 전달하세요. 다른 도구에서는 식별자 전달을 지원하지 않을 수 있습니다.');
     if (fixed) parts.push('[매 회차 고정 안전 규칙]\n' + fixed);
     if (mode === 'dynamic') {
       parts.push('[응답 규약]\n실행 가능한 다음 단계가 있으면 응답 마지막에 ' +

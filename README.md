@@ -1,6 +1,6 @@
 # ChatGPT AutoPilot
 
-ChatGPT 웹에서 연결된 작업용 플러그인(MCP·앱)을 사용하여 프로젝트 작업을 이어 가는 Chrome 확장 프로그램입니다. **사람이 시작한 대화**에서 응답 종료 후 다음 프롬프트를 전송합니다. (실험용 v0.5.0)
+ChatGPT 웹에서 연결된 작업용 플러그인(MCP·앱)을 사용하여 프로젝트 작업을 이어 가는 Chrome 확장 프로그램입니다. **사람이 시작한 대화**에서 응답 종료 후 다음 프롬프트를 전송합니다. (실험용 v0.6.0)
 
 > AutoPilot 자체는 코드를 실행하거나 도구 권한을 얻지 않습니다. 작업은 대화에 연결된 플러그인이 수행합니다. 최대 100회는 전송 상한이지 실제 100회 완주 보장이 아닙니다.
 
@@ -25,6 +25,25 @@ ChatGPT 웹에서 연결된 작업용 플러그인(MCP·앱)을 사용하여 프
 - 서버의 소스 코드를 변경해도 PC에 설치된 확장 프로그램이 자동으로 갱신되지는 않습니다. 최신 확장 코드로 교체한 뒤 chrome://extensions에서 확장 프로그램과 ChatGPT 탭을 새로고침해야 합니다. 실행 중인 회차는 새 코드로 자동 교체되지 않습니다.
 
 
+
+
+
+## v0.6.0 실행 추적 및 MCP 감사 로그 (사전 검증 버전)
+
+v0.5.0의 Plan Mode와 기존 1~100회 반복 실행 기능은 유지하면서 실제 Chrome 인수 전에 진단 로그를 추가했습니다.
+
+- 브라우저: 실행 ID, 회차, 진행 상태, 계획 단계, 작업 결과를 로컬 저장소에 최근 1,000개 이벤트까지 보관합니다. 사이드패널의 실행 추적 기록에서 JSONL 내보내기가 가능합니다.
+- 실행 프롬프트: MCP 도구 exec_command/run_script에서 env 인자를 지원하면 AUTOPILOT_RUN_ID와 AUTOPILOT_TURN을 함께 전달하도록 요청합니다. AI의 도구 호출 여부에 따라 식별자가 누락될 수 있으며 모든 MCP 도구가 이를 지원하지는 않습니다.
+- MCP 서버: 별도로 배포된 cokacremote 소스에 감사 로그 패치를 적용했으며 사용자 저장소의 integrations/cokacremote/audit-v06.patch에도 패치를 보관합니다. 운영 서버 프로세스는 아직 재시작하지 않았습니다.
+- MCP JSONL 위치: 기본 /shared/autopilot-logs/mcp/events.jsonl (MCP_AUDIT_DIR로 변경 가능). 2 MiB 파일 로테이션과 최대 5개 이전 로그 보관.
+- 기록: HTTP 요청 ID, 도구명, 처리 시간, 종료 코드, 오류 분류, 선택적 실행 ID/회차. 원본 명령, 파일 내용, stdin, 인증 헤더, stdout/stderr 원문은 저장하지 않습니다.
+- 실행 요약: node scripts/audit-summary.mjs <events.jsonl> [summary.json]. 브라우저 로그와 MCP 로그를 별도로 집계합니다. 브라우저 로그가 MCP 서버로 자동 업로드되는 기능은 아직 없습니다.
+- 실제 운영 적용: 정상 배포 절차에 따라 MCP 프로세스를 재시작해야 합니다. 연결 중인 프로세스를 강제 종료하지 않았으므로 현재 상시 서비스는 새 기능을 아직 로드하지 않았습니다.
+- 운영 주의: 감사 로그는 Git 저장소 밖에 생성하며 파일 권한을 제한합니다. 로그 접근 권한 및 저장 공간을 별도로 관리해야 합니다.
+
+### MCP 감사 로그 패치 재적용
+
+해당 cokacremote 소스 버전에서 git apply --check /shared/ChatGPT-AutoPilot/integrations/cokacremote/audit-v06.patch 로 적용 여부를 먼저 확인합니다. 적용 후 npm run typecheck, npm run build, npm test를 실행합니다. 실제 운영 재배포 시에는 해당 컨테이너 이미지 및 영속 볼륨 설정까지 검증해야 합니다. 제3자 MCP 서버의 원격 저장소에 push하지 않습니다.
 
 ## v0.5.0 Plan Mode (프로젝트별 대화형 설계)
 
