@@ -1,24 +1,24 @@
 /* 프로젝트 프로필과 Claude 방식의 단계별 설계 인터뷰 UI. */
 (() => {
   const D=window.AutoPilotPlanning;
+  const PM=window.AutoPilotProjects;
+  if(!PM)throw Error('projects.js 누락');
   if (!D) throw Error('planning.js 누락');
   const $=s=>document.querySelector(s);
   const ui={
     project:$('#plan-project'),name:$('#plan-name'),scope:$('#plan-scope'),
-    save:$('#plan-save'),analyze:$('#plan-analyze'),status:$('#plan-status'),
+    save:$('#plan-save'),discover:$('#plan-discover'),analyze:$('#plan-analyze'),status:$('#plan-status'),
     summary:$('#plan-summary'),questions:$('#plan-questions'),
     submit:$('#plan-submit'),review:$('#plan-review'),result:$('#plan-result'),
     approve:$('#plan-approve'),start:$('#plan-start')
   };
-  const defaults=[
-    {id:'salvager',name:'Project Salvager',scope:'/shared/project-salvager',approvedPlan:null},
-    {id:'perpdex',name:'PerpDEX',scope:'/shared/PerpDEX',approvedPlan:null}
-  ];
-  let profiles=[], selectedId='', planData=null, planQuestions=null, questionSignature='', pending=false;
+  let profiles=[], selectedId='new', planData=null, planQuestions=null, questionSignature='', discoverySignature='', pending=false;
   const current=()=>profiles.find(x=>x.id===selectedId) || null;
   const renderMessage=message=>{ui.status.textContent=message;};
   async function persist() {
-    await chrome.storage.local.set({autopilotProfiles:profiles,autopilotSelectedProject:selectedId});
+    await chrome.storage.local.set({
+      autopilotProfiles:profiles,autopilotSelectedProject:selectedId,autopilotProfilesMigrated:true
+    });
   }
   function appendText(tag,value,parent) {
     const el=document.createElement(tag);
@@ -33,6 +33,11 @@
       option.value=x.id;option.textContent=x.name;
       ui.project.append(option);
     });
+    if(!profiles.length){
+      const empty=document.createElement('option');
+      empty.value='new';empty.textContent='프로젝트 검색 또는 직접 등록';
+      ui.project.append(empty);ui.project.value='new';return;
+    }
     const newOption=document.createElement('option');
     newOption.value='new';newOption.textContent='+ 새 프로젝트';
     ui.project.append(newOption);
@@ -53,7 +58,8 @@
     ui.questions.replaceChildren();
     ui.submit.hidden=true;
     ui.review.hidden=true;
-    renderMessage(item?.approvedPlan ? '확정된 계획이 저장되어 있습니다.' : 'AI 분석을 진행하면 개발 목표를 추천합니다.');
+    renderMessage(item?.approvedPlan ? '확정된 계획이 저장되어 있습니다.' :
+      item ? 'AI 분석을 진행하면 개발 목표를 추천합니다.' : 'MCP에서 프로젝트를 찾거나 직접 등록하세요.');
     ui.start.disabled=!item?.approvedPlan;
     if (item?.approvedPlan) showPlan(item.approvedPlan);
     void persist();
@@ -144,14 +150,14 @@
     if(pending)return;
     const tab=await activeTab();
     if(!tab){renderMessage('ChatGPT 대화 탭을 활성화하고 플러그인을 연결하세요.');return;}
-    pending=true;ui.analyze.disabled=true;ui.submit.disabled=true;
+    pending=true;ui.analyze.disabled=true;ui.discover.disabled=true;ui.submit.disabled=true;
     try {
       const result=await chrome.tabs.sendMessage(tab.id,{action,...params});
       renderMessage(result?.message||'요청 전달 완료');
     } catch(error) {
       renderMessage('ChatGPT 탭을 새로고침한 뒤 다시 실행하세요.');
     } finally {
-      pending=false;ui.analyze.disabled=false;ui.submit.disabled=false;
+      pending=false;ui.analyze.disabled=false;ui.discover.disabled=false;ui.submit.disabled=false;
     }
   }
   async function refreshPlanStorage() {
@@ -164,6 +170,43 @@
       ui.submit.hidden=true;
     }
   }
+  async function refreshDiscovery() {
+    const data=await chrome.storage.local.get([
+      'autopilotDiscoverPhase','autopilotDiscoverStatus','autopilotDiscoveredProjects'
+    ]);
+    if(data.autopilotDiscoverPhase==='discovering'){
+      renderMessage(data.autopilotDiscoverStatus||'MCP 프로젝트 검색 중입니다.');
+      return;
+    }
+    if(data.autopilotDiscoverPhase==='error'){
+      renderMessage('프로젝트 검색 오류: '+(data.autopilotDiscoverStatus||'응답을 확인할 수 없습니다.'));
+      return;
+    }
+    if(data.autopilotDiscoverPhase!=='results'||!data.autopilotDiscoveredProjects)return;
+    let checked;
+    try{checked=D.checkDiscoveredProjects(data.autopilotDiscoveredProjects);}
+    catch(error){renderMessage('검색 결과 검증 실패: '+error.message);return;}
+    const signature=JSON.stringify(checked);
+    if(signature===discoverySignature)return;
+    discoverySignature=signature;
+    const result=PM.mergeDiscovered(profiles,checked,()=>crypto.randomUUID());
+    profiles=result.profiles;
+    refreshProjects();
+    // 검색 전에 선택한 프로젝트와 승인된 계획은 유지한다.
+    const keep=current();
+    if(!keep && profiles.length)selectedId=profiles[0].id;
+    choose(selectedId);
+    await persist();
+    renderMessage(checked.summary+' · 검색 '+checked.projects.length+'개, 신규 등록 '+result.added+'개');
+  }
+  ui.discover.addEventListener('click',async()=>{
+    discoverySignature='';
+    await chrome.storage.local.set({
+      autopilotDiscoverPhase:'discovering',autopilotDiscoverStatus:'프로젝트 검색 요청 중',
+      autopilotDiscoveredProjects:null
+    });
+    await send('planDiscover',{});
+  });
   ui.project.addEventListener('change',()=>{choose(ui.project.value);void refreshPlanStorage();});
   ui.save.addEventListener('click',()=>void saveProject());
   ui.analyze.addEventListener('click',async()=>{
@@ -215,13 +258,19 @@
   });
   chrome.storage.onChanged.addListener((changes,area)=>{
     if(area==='local' && Object.keys(changes).some(x=>x.startsWith('autopilotPlan'))) void refreshPlanStorage();
+    if(area==='local' && Object.keys(changes).some(x=>x.startsWith('autopilotDiscover'))) void refreshDiscovery();
   });
   void (async()=>{
-    const s=await chrome.storage.local.get(['autopilotProfiles','autopilotSelectedProject','settingScope']);
-    profiles=Array.isArray(s.autopilotProfiles)&&s.autopilotProfiles.length ? s.autopilotProfiles : defaults;
+    const s=await chrome.storage.local.get([
+      'autopilotProfiles','autopilotSelectedProject','settingScope','autopilotProfilesMigrated'
+    ]);
+    // 최초 업데이트 시에만 예전 자동 시드 프로필을 정리하고 사용자가 편집/승인한 항목은 보존한다.
+    const migrated=PM.migrate(s.autopilotProfiles,s.autopilotProfilesMigrated);
+    profiles=migrated.profiles;
     selectedId=profiles.some(x=>x.id===s.autopilotSelectedProject) ? s.autopilotSelectedProject :
-      (profiles.find(x=>x.scope===s.settingScope)?.id || profiles[0].id);
+      (profiles.find(x=>x.scope===s.settingScope)?.id || profiles[0]?.id || 'new');
     refreshProjects();choose(selectedId);
     await refreshPlanStorage();
+    await refreshDiscovery();
   })();
 })();

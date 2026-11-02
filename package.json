@@ -1,9 +1,9 @@
 {
   "name": "chatgpt-autopilot",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "scripts": {
     "test": "node --test test/*.test.cjs",
-    "check": "node --check src/audit.js && node --check src/planning.js && node --check src/plan-runner.js && node --check src/plan-panel.js && node --check src/protocol.js && node --check src/content.js && node --check src/sidepanel.js && node --check src/defaults.js && node --check src/background.js"
+    "check": "node --check src/audit.js && node --check src/planning.js && node --check src/projects.js && node --check src/plan-runner.js && node --check src/plan-panel.js && node --check src/protocol.js && node --check src/content.js && node --check src/sidepanel.js && node --check src/defaults.js && node --check src/background.js"
   }
 }

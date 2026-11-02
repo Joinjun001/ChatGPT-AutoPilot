@@ -38,3 +38,10 @@ AI가 생성한 프롬프트와 웹 문서는 도구 권한을 바꿀 수 없습
 - integrations/cokacremote/audit-v06.patch: 운영 MCP 서버에 요청/도구 메타데이터를 AsyncLocalStorage로 연결하고 JSONL로 저장하는 코드 패치.
 - MCP 호출 실행 ID는 지원 도구의 env를 이용하는 최선 노력 방식이며 완전한 전역 추적은 아님. 브라우저 로그 서버 자동 업로드 기능 없음.
 - 코드 검증과 실제 운영 MCP 재배포는 별개임. 재시작 전 운영 프로세스는 변경 사항을 반영하지 않음.
+
+## v0.6.1 프로젝트 자동 검색
+
+- src/projects.js: 고정 예시 프로젝트 없는 초기 상태, 이전 자동 시드 항목의 일회성 마이그레이션, 사용자가 승인·수정한 기존 프로필 보존.
+- src/planning.js: 읽기 전용 MCP 목록 검색 프롬프트와 검색 결과 JSON 계약. 검증된 /shared/ 경로만 허용.
+- src/plan-runner.js: 검색 응답을 일반 Plan Mode와 독립된 브라우저 저장소 키에 기록하며 중복 전송을 방지.
+- src/plan-panel.js: MCP에서 프로젝트 찾기와 검색 결과 병합. 검색은 사용자 클릭으로만 시작하며 실제 MCP 도구 호출은 ChatGPT가 수행.

@@ -85,3 +85,57 @@ test('AutoPilot 실행 중에는 설계 요청을 보내지 않는다', {timeout
   assert.equal(values.autopilotPlanPhase,'error');
   assert.match(values.autopilotPlanStatus,/AutoPilot이 실행 중/);
 });
+
+test('프로젝트 검색은 실제 형식 응답만 저장하고 Plan Mode 상태를 덮어쓰지 않는다', {timeout:12000}, async()=>{
+  let listener,transcript='',sent=0;
+  const values={autopilotRunning:false,autopilotPlanPhase:'review',autopilotPlanResult:{title:'기존 승인 계획'}};
+  class Textarea {
+    constructor(){this._value='';}
+    get value(){return this._value;}
+    set value(v){this._value=v;}
+    getClientRects(){return [1];}
+    focus(){}
+    dispatchEvent(){}
+  }
+  const el=new Textarea();
+  const main={get innerText(){return transcript;},querySelectorAll(){return [];}};
+  const button={disabled:false,getClientRects(){return [1];},click(){
+    sent++;
+    transcript+='\n'+el.value;
+    setTimeout(()=>{
+      transcript+='\n'+D.DISCOVER_START+'\n'+JSON.stringify({
+        summary:'MCP로 실제 프로젝트 2개 조회',
+        projects:[{name:'Game',scope:'/shared/game'},{name:'Backend',scope:'/shared/backend'}]
+      })+'\n'+D.DISCOVER_END;
+    },100);
+  }};
+  const context={
+    window:{AutoPilotPlanning:D},
+    document:{querySelector(sel){
+      if(sel==='main')return main;
+      if(sel==='#prompt-textarea')return el;
+      if(sel==='button[data-testid="send-button"]')return button;
+      return null;
+    },body:main},
+    chrome:{storage:{local:{
+      async get(){return {...values};},
+      async set(o){Object.assign(values,o);}
+    }},runtime:{onMessage:{addListener(f){listener=f;}}}},
+    crypto:{randomUUID:()=>String(sent+1)},
+    HTMLTextAreaElement:Textarea,HTMLInputElement:class{},
+    InputEvent:class{},setTimeout,console
+  };
+  vm.runInNewContext(fs.readFileSync(require.resolve('../src/plan-runner.js'),'utf8'),context);
+  listener({action:'planDiscover'},null,()=>{});
+  listener({action:'planDiscover'},null,()=>{});
+  for(let i=0;i<110 && values.autopilotDiscoverPhase!=='results';i++){
+    if(values.autopilotDiscoverPhase==='error')throw Error(values.autopilotDiscoverStatus);
+    await new Promise(r=>setTimeout(r,60));
+  }
+  assert.equal(values.autopilotDiscoverPhase,'results');
+  assert.equal(sent,1);
+  assert.equal(values.autopilotDiscoveredProjects.projects.length,2);
+  assert.equal(values.autopilotPlanPhase,'review');
+  assert.equal(values.autopilotPlanResult.title,'기존 승인 계획');
+  assert.equal(values.autopilotRunning,false);
+});

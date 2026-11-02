@@ -9,10 +9,14 @@
   let active = false;
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const isBusy = () => Boolean(document.querySelector('button[data-testid="stop-button"], button[aria-label="Stop generating"]'));
-  const status = async (phase, message, scope) => {
-    void A?.record(chrome,{event:'plan_state',scope,phase,status:phase}).catch(()=>undefined);
-    await chrome.storage.local.set({autopilotPlanPhase:phase, autopilotPlanStatus:message,
-      ...(scope ? {autopilotPlanScope:scope} : {})});
+  const status = async (phase, message, scope, kind='questions') => {
+    void A?.record(chrome,{event:kind==='discover'?'project_discovery':'plan_state',scope,phase,status:phase}).catch(()=>undefined);
+    if(kind==='discover'){
+      await chrome.storage.local.set({autopilotDiscoverPhase:phase,autopilotDiscoverStatus:message});
+    } else {
+      await chrome.storage.local.set({autopilotPlanPhase:phase, autopilotPlanStatus:message,
+        ...(scope ? {autopilotPlanScope:scope} : {})});
+    }
   };
   const firstVisible = selectors => {
     for (const selector of selectors) {
@@ -71,7 +75,7 @@
   }
   async function run(kind, scope, prompt) {
     if (active || window.__autopilotPlanningActive) return '이미 설계 분석이 진행 중입니다.';
-    if (!D.validScope(scope)) return '프로젝트 경로를 확인해 주세요.';
+    if (kind!=='discover' && !D.validScope(scope)) return '프로젝트 경로를 확인해 주세요.';
     // 브라우저 저장소 조회 전에 잠가 빠른 중복 클릭의 이중 전송을 방지한다.
     active=true;
     window.__autopilotPlanningActive=true;
@@ -84,7 +88,7 @@
       return '실행 상태 조회 실패: '+error.message;
     }
     if (saved.autopilotRunning || isBusy()) {
-      await status('error','다른 응답 또는 AutoPilot이 실행 중입니다.',scope);
+      await status('error','다른 응답 또는 AutoPilot이 실행 중입니다.',scope,kind);
       active=false;
       window.__autopilotPlanningActive=false;
       return '다른 응답 또는 AutoPilot이 실행 중입니다.';
@@ -92,8 +96,8 @@
     const id='[AUTOPILOT_PLAN_ID:'+crypto.randomUUID()+']';
     void A?.record(chrome,{event:'plan_start',scope,planId:id}).catch(()=>undefined);
     const text=id+'\n'+prompt+'\n'+id+':END';
-    const phase=kind==='questions'?'analyzing':'finalizing';
-    await status(phase,'설계 '+(kind==='questions'?'질문 생성':'계획 작성')+' 진행 중',scope);
+    const phase=kind==='discover'?'discovering':kind==='questions'?'analyzing':'finalizing';
+    await status(phase,kind==='discover'?'MCP에서 프로젝트를 검색 중입니다.':'설계 '+(kind==='questions'?'질문 생성':'계획 작성')+' 진행 중',scope,kind);
     try {
       let button=null;
       for (let i=0;i<3;i++) {
@@ -109,9 +113,9 @@
         await pause(700);
       }
       if (!button || isBusy()) throw Error('ChatGPT 메시지 입력·전송 버튼을 확인할 수 없습니다.');
-      await status(phase,'계획 요청 전송 직전. 중복 전송은 금지됩니다.',scope);
+      await status(phase,'요청 전송 직전. 중복 전송은 금지됩니다.',scope,kind);
       button.click();
-      await status(phase,'AI 응답을 확인 중',scope);
+      await status(phase,'AI 응답을 확인 중',scope,kind);
       const deadline=Date.now()+180000;
       let last='';let stableAt=Date.now();
       while (Date.now()<deadline) {
@@ -120,19 +124,24 @@
         const out=D.parseReply(raw,kind);
         if (out.ready && Date.now()-stableAt>2500 && !isBusy()) {
           if (out.error) throw Error(out.error);
-          const values=kind==='questions'
-            ? {autopilotPlanQuestions:out.value,autopilotPlanResult:null}
-            : {autopilotPlanResult:out.value};
-          await chrome.storage.local.set({...values,autopilotPlanScope:scope});
-          void A?.record(chrome,{event:'plan_result',scope,planId:id,status:kind}).catch(()=>undefined);
-          await status(kind==='questions'?'questions':'review','AI 응답을 확인했습니다. 사용자 선택을 기다립니다.',scope);
+          if(kind==='discover'){
+            await chrome.storage.local.set({autopilotDiscoveredProjects:out.value});
+            await status('results',out.value.summary,scope,kind);
+          }else{
+            const values=kind==='questions'
+              ? {autopilotPlanQuestions:out.value,autopilotPlanResult:null}
+              : {autopilotPlanResult:out.value};
+            await chrome.storage.local.set({...values,autopilotPlanScope:scope});
+            void A?.record(chrome,{event:'plan_result',scope,planId:id,status:kind}).catch(()=>undefined);
+            await status(kind==='questions'?'questions':'review','AI 응답을 확인했습니다. 사용자 선택을 기다립니다.',scope,kind);
+          }
           return '계획 응답 완료';
         }
         await pause(600);
       }
       throw Error('계획 응답을 확인할 수 없습니다. 자동 재전송하지 않습니다.');
     } catch (error) {
-      await status('error',error.message || String(error),scope);
+      await status('error',error.message || String(error),scope,kind);
       return '계획 오류: '+(error.message || String(error));
     } finally {
       active=false;
@@ -140,7 +149,10 @@
     }
   }
   chrome.runtime.onMessage.addListener((message,_sender,reply) => {
-    if (message.action==='planAnalyze') {
+    if(message.action==='planDiscover'){
+      void run('discover','',D.discoveryPrompt());
+      reply({message:'MCP 프로젝트 검색을 요청했습니다.'});
+    }else if (message.action==='planAnalyze') {
       if (!D.validScope(message.scope)) {reply({message:'프로젝트 경로가 유효하지 않습니다.'});return;}
       void run('questions',message.scope,D.analysisPrompt(message.scope));
       reply({message:'프로젝트 분석을 시작했습니다.'});

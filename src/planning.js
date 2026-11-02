@@ -6,6 +6,8 @@
   const RESULT_START = 'AUTOPILOT_PLAN_RESULT_START';
   const RESULT_END = 'AUTOPILOT_PLAN_RESULT_END';
   const MAX_JSON = 24000;
+  const DISCOVER_START='AUTOPILOT_PROJECTS_START';
+  const DISCOVER_END='AUTOPILOT_PROJECTS_END';
   function short(value, limit = 500) {
     return typeof value === 'string' ? value.trim().slice(0, limit) : '';
   }
@@ -16,6 +18,38 @@
       !/[\n\r\0$|;&<>]/.test(path) && !path.includes(String.fromCharCode(96)) &&
       /^\/shared\/[\w가-힣.-]+(?:\/[\w가-힣.-]+)*\/?$/.test(path);
   }
+  function checkDiscoveredProjects(data) {
+    if(!data || typeof data!=='object'||Array.isArray(data)||
+       typeof data.summary!=='string'||!data.summary.trim()||
+       !Array.isArray(data.projects)||data.projects.length>40)
+      throw Error('프로젝트 검색 응답 형식이 올바르지 않습니다.');
+    const seen=new Set();
+    const projects=[];
+    for(const p of data.projects){
+      if(!p || typeof p.name!=='string'||!p.name.trim()||!validScope(p.scope))
+        throw Error('검색된 프로젝트 이름 또는 경로가 유효하지 않습니다.');
+      if(seen.has(p.scope))continue;
+      seen.add(p.scope);
+      projects.push({name:short(p.name,100),scope:p.scope});
+    }
+    return {summary:short(data.summary,1200),projects};
+  }
+
+  function discoveryPrompt() {
+    return [
+      '[AutoPilot 프로젝트 검색 — 읽기 전용]',
+      '현재 ChatGPT 대화에 연결된 SSalMuk-Plugin/MCP를 사용하여 /shared 경로의 실제 하위 디렉터리를 조회하세요.',
+      '가능하면 각 폴더의 README, PROJECT_STATE.md, package.json, project.godot 등 프로젝트 식별 정보의 존재만 간략히 확인하세요.',
+      '실제로 조회할 수 있는 프로젝트만 반환하세요. 도구가 연결되지 않았거나 경로 접근이 불가능하면 프로젝트를 만들어내지 말고 빈 목록과 오류 요약을 반환하세요.',
+      '파일 쓰기·수정, 커밋, Git 변경, 프로그램 실행, 테스트, 배포는 하지 마세요. 조회를 위한 읽기 전용 도구 호출만 사용하세요.',
+      '프로젝트당 이름과 /shared/ 아래의 실제 절대 경로를 반환하세요. 프로젝트 목록은 최대 40개입니다.',
+      '답변 끝에 아래 구분자 사이에 코드 펜스 없는 순수 JSON 객체를 출력하세요.',
+      DISCOVER_START,
+      '{"summary":"검색 완료 또는 접근 실패 사유","projects":[{"name":"실제 검색된 프로젝트 이름","scope":"/shared/실제-폴더명"}]}',
+      DISCOVER_END
+    ].join('\n');
+  }
+
   function checkQuestions(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw Error('질문 형식이 올바르지 않습니다.');
     const summary = short(data.summary, 1200);
@@ -48,8 +82,8 @@
       constraints: short(data.constraints, 1500)};
   }
   function parseReply(raw, kind) {
-    const start = kind === 'questions' ? QUESTION_START : RESULT_START;
-    const end = kind === 'questions' ? QUESTION_END : RESULT_END;
+    const start = kind === 'discover' ? DISCOVER_START : kind === 'questions' ? QUESTION_START : RESULT_START;
+    const end = kind === 'discover' ? DISCOVER_END : kind === 'questions' ? QUESTION_END : RESULT_END;
     const value = String(raw || '');
     const before = value.indexOf(start);
     const after = value.indexOf(end);
@@ -58,7 +92,7 @@
         after <= before || after-before > MAX_JSON) return {ready:true,error:'계획 응답의 구분자 또는 크기가 올바르지 않습니다.'};
     try {
       const obj = JSON.parse(value.slice(before+start.length, after).trim());
-      return {ready:true, value:kind === 'questions' ? checkQuestions(obj) : checkPlan(obj)};
+      return {ready:true, value:kind === 'discover' ? checkDiscoveredProjects(obj) : kind === 'questions' ? checkQuestions(obj) : checkPlan(obj)};
     } catch (error) {
       return {ready:true,error:'AI 계획 응답 형식 오류: ' + error.message};
     }
@@ -119,8 +153,9 @@
       '다음 작업이 있으면 현재 목표와 완료 기준을 유지한 후속 프롬프트를 작성하세요. 완료/차단 상태는 확장프로그램 응답 규약을 따르세요.'
     ].filter(Boolean).join('\n\n');
   }
-  const api = {QUESTION_START, QUESTION_END, RESULT_START, RESULT_END,
-    validScope, checkQuestions, checkPlan, parseReply, analysisPrompt, finalizePrompt, executionPrompt};
+  const api = {QUESTION_START, QUESTION_END, RESULT_START, RESULT_END, DISCOVER_START, DISCOVER_END,
+    validScope, checkQuestions, checkDiscoveredProjects, checkPlan, parseReply,
+    discoveryPrompt, analysisPrompt, finalizePrompt, executionPrompt};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (root) root.AutoPilotPlanning = api;
 })(typeof window !== 'undefined' ? window : null);
