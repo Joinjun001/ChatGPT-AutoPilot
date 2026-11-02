@@ -7,7 +7,8 @@
   const $=s=>document.querySelector(s);
   const ui={
     project:$('#plan-project'),name:$('#plan-name'),scope:$('#plan-scope'),
-    save:$('#plan-save'),discover:$('#plan-discover'),analyze:$('#plan-analyze'),status:$('#plan-status'),
+    save:$('#plan-save'),discover:$('#plan-discover'),discoverStatus:$('#plan-discover-status'),
+    analyze:$('#plan-analyze'),status:$('#plan-status'),
     summary:$('#plan-summary'),questions:$('#plan-questions'),
     submit:$('#plan-submit'),review:$('#plan-review'),result:$('#plan-result'),
     approve:$('#plan-approve'),start:$('#plan-start')
@@ -15,6 +16,10 @@
   let profiles=[], selectedId='new', planData=null, planQuestions=null, questionSignature='', discoverySignature='', pending=false;
   const current=()=>profiles.find(x=>x.id===selectedId) || null;
   const renderMessage=message=>{ui.status.textContent=message;};
+  const renderDiscoveryMessage=message=>{
+    ui.discoverStatus.textContent=message;
+    renderMessage(message);
+  };
   async function persist() {
     await chrome.storage.local.set({
       autopilotProfiles:profiles,autopilotSelectedProject:selectedId,autopilotProfilesMigrated:true
@@ -144,19 +149,50 @@
   }
   async function activeTab() {
     const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-    return tab?.url?.startsWith('https://chatgpt.com/') ? tab:null;
+    if(!Number.isInteger(tab?.id))return null;
+    // Chrome은 activeTab 권한 범위에 따라 tab.url을 제공하지 않을 수 있습니다.
+    // URL이 없는 경우 현재 탭에만 메시지를 시도합니다.
+    // 컨텐츠 스크립트는 chatgpt.com에만 등록되어 있으므로 다른 사이트에는 전달되지 않습니다.
+    if(typeof tab.url==='string' && !/^https:\/\/chatgpt\.com(?:\/|$)/.test(tab.url))return null;
+    return tab;
   }
   async function send(action,params) {
-    if(pending)return;
-    const tab=await activeTab();
-    if(!tab){renderMessage('ChatGPT 대화 탭을 활성화하고 플러그인을 연결하세요.');return;}
+    if(pending){
+      renderDiscoveryMessage('이미 요청 전송을 처리 중입니다.');
+      return;
+    }
     pending=true;ui.analyze.disabled=true;ui.discover.disabled=true;ui.submit.disabled=true;
+    const isDiscovery=action==='planDiscover';
+    const report=isDiscovery?renderDiscoveryMessage:renderMessage;
+    const fail=async message=>{
+      report(message);
+      if(isDiscovery){
+        try{
+          await chrome.storage.local.set({
+            autopilotDiscoverPhase:'error',autopilotDiscoverStatus:message
+          });
+        }catch{}
+      }
+    };
     try {
+      report('ChatGPT 대화 탭 연결 확인 중...');
+      const tab=await activeTab();
+      if(!tab){await fail('ChatGPT 대화 탭을 활성화한 뒤 다시 눌러 주세요.');return;}
+      report(isDiscovery?'ChatGPT 탭으로 프로젝트 검색 요청 전송 중...':'ChatGPT 탭으로 계획 요청 전송 중...');
       const result=await chrome.tabs.sendMessage(tab.id,{action,...params});
-      renderMessage(result?.message||'요청 전달 완료');
-    } catch(error) {
-      renderMessage('ChatGPT 탭을 새로고침한 뒤 다시 실행하세요.');
-    } finally {
+      if(!result){
+        await fail('ChatGPT에서 요청 확인 응답이 없습니다. 탭을 새로고침해 주세요.');
+        return;
+      }
+      report(result.message || 'ChatGPT에 요청을 전달했습니다. 응답 분석 중입니다.');
+    }catch(error){
+      const message=String(error?.message || error || '');
+      if(/Receiving end does not exist|Could not establish connection/i.test(message)){
+        await fail('ChatGPT 콘텐츠 스크립트 연결 실패: 확장프로그램과 ChatGPT 탭을 모두 새로고침해 주세요.');
+      }else{
+        await fail('연결 또는 요청 전송 오류: '+message.slice(0,180));
+      }
+    }finally{
       pending=false;ui.analyze.disabled=false;ui.discover.disabled=false;ui.submit.disabled=false;
     }
   }
@@ -175,11 +211,11 @@
       'autopilotDiscoverPhase','autopilotDiscoverStatus','autopilotDiscoveredProjects'
     ]);
     if(data.autopilotDiscoverPhase==='discovering'){
-      renderMessage(data.autopilotDiscoverStatus||'MCP 프로젝트 검색 중입니다.');
+      renderDiscoveryMessage(data.autopilotDiscoverStatus||'MCP 프로젝트 검색 중입니다.');
       return;
     }
     if(data.autopilotDiscoverPhase==='error'){
-      renderMessage('프로젝트 검색 오류: '+(data.autopilotDiscoverStatus||'응답을 확인할 수 없습니다.'));
+      renderDiscoveryMessage('프로젝트 검색 오류: '+(data.autopilotDiscoverStatus||'응답을 확인할 수 없습니다.'));
       return;
     }
     if(data.autopilotDiscoverPhase!=='results'||!data.autopilotDiscoveredProjects)return;
@@ -197,15 +233,24 @@
     if(!keep && profiles.length)selectedId=profiles[0].id;
     choose(selectedId);
     await persist();
-    renderMessage(checked.summary+' · 검색 '+checked.projects.length+'개, 신규 등록 '+result.added+'개');
+    renderDiscoveryMessage(checked.summary+' · 검색 '+checked.projects.length+'개, 신규 등록 '+result.added+'개');
   }
   ui.discover.addEventListener('click',async()=>{
+    if(pending){
+      renderDiscoveryMessage('이미 요청 전송을 처리 중입니다.');
+      return;
+    }
     discoverySignature='';
-    await chrome.storage.local.set({
-      autopilotDiscoverPhase:'discovering',autopilotDiscoverStatus:'프로젝트 검색 요청 중',
-      autopilotDiscoveredProjects:null
-    });
-    await send('planDiscover',{});
+    renderDiscoveryMessage('MCP 프로젝트 검색을 준비 중입니다...');
+    try{
+      await chrome.storage.local.set({
+        autopilotDiscoverPhase:'discovering',autopilotDiscoverStatus:'프로젝트 검색 요청 중',
+        autopilotDiscoveredProjects:null
+      });
+      await send('planDiscover',{});
+    }catch(error){
+      renderDiscoveryMessage('검색 상태 저장 오류: '+String(error?.message || error).slice(0,180));
+    }
   });
   ui.project.addEventListener('change',()=>{choose(ui.project.value);void refreshPlanStorage();});
   ui.save.addEventListener('click',()=>void saveProject());
@@ -261,6 +306,7 @@
     if(area==='local' && Object.keys(changes).some(x=>x.startsWith('autopilotDiscover'))) void refreshDiscovery();
   });
   void (async()=>{
+    try{
     const s=await chrome.storage.local.get([
       'autopilotProfiles','autopilotSelectedProject','settingScope','autopilotProfilesMigrated'
     ]);
@@ -272,5 +318,9 @@
     refreshProjects();choose(selectedId);
     await refreshPlanStorage();
     await refreshDiscovery();
+    }catch(error){
+      refreshProjects();
+      renderDiscoveryMessage('프로젝트 설정 불러오기 실패: '+String(error?.message || error).slice(0,180));
+    }
   })();
 })();
