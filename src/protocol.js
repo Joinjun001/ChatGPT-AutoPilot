@@ -7,10 +7,18 @@
   const MAX_PROMPT = 8000;
   // 마지막 Assistant 메시지 DOM이 없는 경우에만 전체 대화 텍스트를 검사한다.
   // 알려진 ChatGPT UI footer만 제거하며, 임의 문장이 뒤따르면 반드시 거부한다.
-  const CHATGPT_FOOTER_RE = /(?:\s+Like this personality\?)?\s+ChatGPT can make mistakes\.\s*Check important info\.(?:\s+Latest response(?:\s+Thinking effort)?(?:\s+(?:Instant|Medium|High|Extra High))?)?\s*$/i;
+  const CHATGPT_FOOTER_RE = /\s+ChatGPT can make mistakes\.\s*Check important info\.(?:\s+Latest response(?:\s+Thinking effort)?(?:\s+(?:Instant|Medium|High|Extra High))?)?\s*$/i;
+  // ChatGPT가 응답 아래에 삽입하는 별도 제품 피드백 UI. 정확한 고정 문구만 허용한다.
+  // 임의 후행 텍스트를 제거하면 실제 응답의 마지막 상태를 오판할 수 있으므로 금지한다.
+  const CHATGPT_FEEDBACK_RE = /(?:\s+Like this personality\?|\s+Is this conversation helpful so far\?)\s*$/i;
 
   function stripChatGPTFooter(value) {
-    return String(value || '').trim().replace(CHATGPT_FOOTER_RE, '').trimEnd();
+    let cleaned = String(value || '').trim().replace(CHATGPT_FOOTER_RE, '').trimEnd();
+    // 메시지 DOM 안/밖에 있는 설문 위젯은 안내 문구 없이 단독으로 붙기도 한다.
+    while (CHATGPT_FEEDBACK_RE.test(cleaned)) {
+      cleaned = cleaned.replace(CHATGPT_FEEDBACK_RE, '').trimEnd();
+    }
+    return cleaned;
   }
 
   function normalize(value) {

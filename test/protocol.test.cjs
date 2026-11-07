@@ -16,6 +16,36 @@ test('실제 로그의 ChatGPT UI footer를 제거하고 동적 프롬프트를 
   assert.equal(P.parseResponse('대기\nAUTOPILOT: BLOCKED\nChatGPT can make mistakes. Check important info. Latest response Thinking effort Medium', 'dynamic').status, 'BLOCKED');
 });
 
+test('화면 하단 대화 평가 설문이 CONTINUE 뒤에 붙어도 다음 프롬프트를 판독한다', () => {
+  const result = dynamic('3화 움직이지 않는 숲 집필');
+  for (const footer of [
+    'Is this conversation helpful so far?\nChatGPT can make mistakes. Check important info. Latest response',
+    'Is this conversation helpful so far?\nChatGPT can make mistakes. Check important info.',
+    'Is this conversation helpful so far?',
+    'Like this personality?\nIs this conversation helpful so far?\nChatGPT can make mistakes. Check important info. Latest response Thinking effort High'
+  ]) {
+    assert.deepEqual(P.parseResponse(result + '\n' + footer, 'dynamic'),
+      {status:'CONTINUE',nextPrompt:'3화 움직이지 않는 숲 집필'});
+  }
+  assert.equal(P.parseResponse('완료\nAUTOPILOT: DONE\nIs this conversation helpful so far?', 'dynamic').status,'DONE');
+});
+
+test('설문과 유사한 후행 임의 텍스트는 제거하지 않고 차단한다', () => {
+  const reply = dynamic('다음 작업');
+  assert.ok(P.parseResponse(reply + '\n실제 사용자 추가 질문\nIs this conversation helpful so far?\nChatGPT can make mistakes. Check important info. Latest response', 'dynamic').error);
+  assert.ok(P.parseResponse(reply + '\nUnknown feedback prompt\nChatGPT can make mistakes. Check important info.', 'dynamic').error);
+  assert.ok(P.parseResponse(reply + '\nIs this conversation helpful so far?\n추가 설명', 'dynamic').error);
+});
+
+test('역할 DOM이 없을 때 실제 화면의 설문·안내 문구와 함께 다음 프롬프트를 추출한다', () => {
+  const user = '[AUTOPILOT_MESSAGE_ID:run:3]:END';
+  const answer = dynamic('4화 집필 준비');
+  const container = {innerText:user + '\n' + answer + '\nIs this conversation helpful so far?\nChatGPT can make mistakes. Check important info. Latest response', querySelectorAll:()=>[]};
+  const actual = P.readReplyFromDom(container,'run',3);
+  assert.equal(actual.found,true);
+  assert.deepEqual(P.parseResponse(actual.text,'dynamic'),{status:'CONTINUE',nextPrompt:'4화 집필 준비'});
+});
+
 test('UI footer와 다른 실제 후행 대화 내용은 잘못된 응답으로 중지한다', () => {
   assert.ok(P.parseResponse(dynamic('다음 TASK') + '\n이어지는 사용자 문장\nChatGPT can make mistakes. Check important info.', 'dynamic').error);
   assert.ok(P.parseResponse(dynamic('다음 TASK') + '\n임의의 미등록 footer', 'dynamic').error);

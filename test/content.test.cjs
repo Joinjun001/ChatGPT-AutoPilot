@@ -33,7 +33,8 @@ test('두 회차를 동적 프롬프트로 실행하고 DONE에서 중지 (DOM �
     const answer = sent.length===1
       ? ('구현 완료\n'+P.BEGIN+'\nM2-T2 서명 검증 진행\n'+P.END+'\nAUTOPILOT: CONTINUE')
       : '전체 완료\nAUTOPILOT: DONE';
-    timeouts.push(setTimeout(()=>{transcript+='\n'+answer+'\nLike this personality?\nChatGPT can make mistakes. Check important info. Latest response High';busy=false;},350));
+    const footer = sent.length === 1 ? 'Is this conversation helpful so far?' : 'Like this personality?';
+    timeouts.push(setTimeout(()=>{transcript+='\n'+answer+'\n'+footer+'\nChatGPT can make mistakes. Check important info. Latest response High';busy=false;},350));
   }};
   const doc={
     querySelector(q) {
